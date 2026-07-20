@@ -25,6 +25,9 @@ def passing_evidence():
             output_mode="short",
             state="PUBLISH_READY",
             objective_gates_passed=True,
+            artifact_digest=f"sha256:short-{index}",
+            package_path=f"/packages/short-{index}",
+            approval_receipt_id=f"approval-short-{index}",
         )
         for index in range(3)
     ) + tuple(
@@ -33,6 +36,9 @@ def passing_evidence():
             output_mode="long",
             state="PUBLISH_READY",
             objective_gates_passed=True,
+            artifact_digest=f"sha256:long-{index}",
+            package_path=f"/packages/long-{index}",
+            approval_receipt_id=f"approval-long-{index}",
         )
         for index in range(3)
     )
@@ -43,6 +49,8 @@ def passing_evidence():
             willing_to_publish=index < 7,
             minor_revisions=1 if index < 7 else 2,
             objective_gates_passed=True,
+            package_artifact_digest=f"sha256:reviewed-{index}",
+            attestation_receipt_id=f"attestation-{index}",
         )
         for index in range(10)
     )
@@ -140,6 +148,26 @@ def test_must_pass_fixture_cannot_be_compensated_by_other_successes():
     assert verdict.passed is False
     assert "all_must_pass_fixtures" in verdict.failed_checks
     assert verdict.worst_slice == "critical-governance"
+
+
+def test_duplicate_founder_artifacts_and_creator_rows_do_not_inflate_thresholds():
+    evidence = passing_evidence()
+    duplicate_founder = (evidence.founder_runs[0],) * 4
+    duplicate_cohort = tuple(evidence.cohort[0] for _ in range(10))
+    evidence = ReleaseEvidence(
+        **{
+            **evidence.__dict__,
+            "founder_runs": duplicate_founder,
+            "cohort": duplicate_cohort,
+        }
+    )
+
+    verdict = ReleaseBar().evaluate(evidence)
+
+    assert verdict.metrics["founder_short_publish_ready"] == 1
+    assert verdict.metrics["cohort_approvals"] == 1
+    assert "founder_three_short_publish_ready" in verdict.failed_checks
+    assert "private_cohort_size" in verdict.failed_checks
 
 
 def test_non_certified_platform_is_reported_not_silently_accepted():

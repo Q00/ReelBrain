@@ -136,8 +136,100 @@ class ReleaseEvidenceStore:
     def record_founder_run(self, run: FounderDogfoodRun) -> None:
         self.append("founder_run", asdict(run))
 
+    def record_founder_package(
+        self,
+        *,
+        package_root: Path | str,
+        run_id: str,
+        output_mode: str,
+    ) -> FounderDogfoodRun:
+        root = Path(package_root).expanduser().resolve()
+        if output_mode not in {"short", "long"}:
+            raise ValueError("founder_output_mode_invalid")
+        audit_path = root / "validation_report.json"
+        if not audit_path.is_file():
+            raise ValueError("founder_validation_report_missing")
+        audit = json.loads(audit_path.read_text(encoding="utf-8"))
+        if audit.get("status") != "PUBLISH_READY":
+            raise ValueError("founder_package_not_publish_ready")
+        if audit.get("output_mode") != output_mode:
+            raise ValueError("founder_output_mode_mismatch")
+        approval_receipt = str(audit.get("creator_approval_receipt") or "").strip()
+        if not approval_receipt:
+            raise ValueError("founder_creator_approval_missing")
+        required = {
+            "captions.srt",
+            "captions.vtt",
+            "timeline.otio",
+            "asset_manifest.json",
+            "rights_manifest.json",
+            "source_traceability.json",
+            "validation_report.json",
+        }
+        video = root / ("final_short.mp4" if output_mode == "short" else "final_long.mp4")
+        if output_mode == "long":
+            required.update(
+                {
+                    "chapters.json",
+                    "thumbnail.jpg",
+                    "render_recipe.json",
+                    "argument_map.json",
+                    "corrected_transcript.txt",
+                    "provenance.json",
+                    "cost_receipt.json",
+                    "approval_history.json",
+                }
+            )
+        missing = sorted(name for name in required if not (root / name).is_file())
+        if missing or not video.is_file():
+            raise ValueError(f"founder_package_artifacts_missing:{','.join(missing)}")
+        digest = sha256()
+        with video.open("rb") as handle:
+            for block in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(block)
+        run = FounderDogfoodRun(
+            run_id=run_id,
+            output_mode=output_mode,
+            state="PUBLISH_READY",
+            objective_gates_passed=True,
+            artifact_digest=f"sha256:{digest.hexdigest()}",
+            package_path=str(root),
+            approval_receipt_id=approval_receipt,
+        )
+        self.record_founder_run(run)
+        return run
+
     def record_cohort_feedback(self, feedback: CohortFeedback) -> None:
         self.append("cohort_feedback", asdict(feedback))
+
+    def record_cohort_response(self, response_path: Path | str) -> CohortFeedback:
+        path = Path(response_path).expanduser().resolve()
+        if not path.is_file():
+            raise ValueError("cohort_response_missing")
+        document = json.loads(path.read_text(encoding="utf-8"))
+        required = (
+            "creator_id",
+            "package_artifact_digest",
+            "attestation_receipt_id",
+        )
+        if any(not str(document.get(key) or "").strip() for key in required):
+            raise ValueError("cohort_attestation_incomplete")
+        feedback = CohortFeedback(
+            creator_id=str(document["creator_id"]),
+            approves_fidelity_and_personalization=bool(
+                document.get("approves_fidelity_and_personalization", False)
+            ),
+            willing_to_publish=bool(document.get("willing_to_publish", False)),
+            minor_revisions=int(document.get("minor_revisions", 0)),
+            objective_gates_passed=bool(document.get("objective_gates_passed", False)),
+            critical_failure=bool(document.get("critical_failure", False)),
+            package_artifact_digest=str(document["package_artifact_digest"]),
+            attestation_receipt_id=str(document["attestation_receipt_id"]),
+        )
+        if feedback.minor_revisions < 0:
+            raise ValueError("cohort_minor_revisions_invalid")
+        self.record_cohort_feedback(feedback)
+        return feedback
 
     def load(self) -> ReleaseEvidence:
         governance_clean_runs = 0

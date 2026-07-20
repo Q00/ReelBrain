@@ -12,7 +12,6 @@ import sys
 
 from .evidence import ReleaseEvidenceStore
 from .editing import LocalPackageBuilder, RightsEntry, TranscriptSegment
-from .release import CohortFeedback, FounderDogfoodRun, SemanticFixtureResult
 from .planning import LongFormPlanBuilder
 from .setup import SetupManager
 from .transcription import LocalWhisperSTT, SubtitleFileSTT
@@ -178,21 +177,6 @@ def release_governance(args) -> int:
     return 0
 
 
-def release_fixture(args) -> int:
-    evidence_store(args).record_fixture(
-        SemanticFixtureResult(
-            fixture_id=args.fixture_id,
-            passed=args.passed,
-            must_pass=args.must_pass,
-            first_pass=not args.repaired,
-            major_defect=args.major_defect,
-            critical_failure=args.critical_failure,
-            slice_name=args.slice,
-        )
-    )
-    return 0
-
-
 def release_verify_fixtures(args) -> int:
     results = evidence_store(args).verify_required_fixtures(working_dir=Path.cwd())
     print(
@@ -216,27 +200,25 @@ def release_verify_fixtures(args) -> int:
 
 
 def release_founder(args) -> int:
-    evidence_store(args).record_founder_run(
-        FounderDogfoodRun(
-            run_id=args.run_id,
-            output_mode=args.output_mode,
-            state=args.state,
-            objective_gates_passed=args.objective_gates_passed,
-            critical_failure=args.critical_failure,
-        )
+    run = evidence_store(args).record_founder_package(
+        package_root=args.package,
+        run_id=args.run_id,
+        output_mode=args.output_mode,
     )
+    print(json.dumps({"recorded": True, "artifact_digest": run.artifact_digest}, indent=2))
     return 0
 
 
-def release_cohort(args) -> int:
-    evidence_store(args).record_cohort_feedback(
-        CohortFeedback(
-            creator_id=args.creator_id,
-            approves_fidelity_and_personalization=args.approves,
-            willing_to_publish=args.willing_to_publish,
-            minor_revisions=args.minor_revisions,
-            objective_gates_passed=args.objective_gates_passed,
-            critical_failure=args.critical_failure,
+def release_cohort_response(args) -> int:
+    feedback = evidence_store(args).record_cohort_response(args.response)
+    print(
+        json.dumps(
+            {
+                "recorded": True,
+                "creator_id": feedback.creator_id,
+                "attestation_receipt_id": feedback.attestation_receipt_id,
+            },
+            indent=2,
         )
     )
     return 0
@@ -316,17 +298,6 @@ def build_parser() -> argparse.ArgumentParser:
     governance.add_argument("--receipt", required=True)
     governance.set_defaults(func=release_governance)
 
-    fixture = release_commands.add_parser("record-fixture")
-    fixture.add_argument("--evidence-dir", type=Path, default=default_evidence_dir())
-    fixture.add_argument("--fixture-id", required=True)
-    boolean_flags(fixture, "passed", default=True)
-    boolean_flags(fixture, "must-pass")
-    boolean_flags(fixture, "repaired")
-    boolean_flags(fixture, "major-defect")
-    boolean_flags(fixture, "critical-failure")
-    fixture.add_argument("--slice", default="default")
-    fixture.set_defaults(func=release_fixture)
-
     verify_fixtures = release_commands.add_parser("verify-fixtures")
     verify_fixtures.add_argument(
         "--evidence-dir", type=Path, default=default_evidence_dir()
@@ -337,20 +308,15 @@ def build_parser() -> argparse.ArgumentParser:
     founder.add_argument("--evidence-dir", type=Path, default=default_evidence_dir())
     founder.add_argument("--run-id", required=True)
     founder.add_argument("--output-mode", choices=("short", "long"), required=True)
-    founder.add_argument("--state", default="PUBLISH_READY")
-    boolean_flags(founder, "objective-gates-passed", default=True)
-    boolean_flags(founder, "critical-failure")
+    founder.add_argument("--package", type=Path, required=True)
     founder.set_defaults(func=release_founder)
 
-    cohort = release_commands.add_parser("record-cohort")
-    cohort.add_argument("--evidence-dir", type=Path, default=default_evidence_dir())
-    cohort.add_argument("--creator-id", required=True)
-    boolean_flags(cohort, "approves")
-    boolean_flags(cohort, "willing-to-publish")
-    cohort.add_argument("--minor-revisions", type=int, default=0)
-    boolean_flags(cohort, "objective-gates-passed", default=True)
-    boolean_flags(cohort, "critical-failure")
-    cohort.set_defaults(func=release_cohort)
+    cohort_response = release_commands.add_parser("record-cohort-response")
+    cohort_response.add_argument(
+        "--evidence-dir", type=Path, default=default_evidence_dir()
+    )
+    cohort_response.add_argument("--response", type=Path, required=True)
+    cohort_response.set_defaults(func=release_cohort_response)
     return parser
 
 

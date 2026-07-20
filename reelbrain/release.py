@@ -30,6 +30,9 @@ class FounderDogfoodRun:
     state: str
     objective_gates_passed: bool
     critical_failure: bool = False
+    artifact_digest: str = ""
+    package_path: str = ""
+    approval_receipt_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -40,6 +43,8 @@ class CohortFeedback:
     minor_revisions: int
     objective_gates_passed: bool
     critical_failure: bool = False
+    package_artifact_digest: str = ""
+    attestation_receipt_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -74,27 +79,43 @@ class ReleaseBar:
             if first_pass
             else 0.0
         )
+        unique_founder = {
+            (run.output_mode, run.artifact_digest): run
+            for run in evidence.founder_runs
+            if run.artifact_digest.strip()
+            and run.package_path.strip()
+            and run.approval_receipt_id.strip()
+        }
+        founder_rows = tuple(unique_founder.values())
+        unique_cohort = {
+            row.creator_id: row
+            for row in evidence.cohort
+            if row.creator_id.strip()
+            and row.package_artifact_digest.strip()
+            and row.attestation_receipt_id.strip()
+        }
+        cohort_rows = tuple(unique_cohort.values())
         short_ready = sum(
             run.output_mode == "short"
             and run.state == "PUBLISH_READY"
             and run.objective_gates_passed
-            for run in evidence.founder_runs
+            for run in founder_rows
         )
         long_ready = sum(
             run.output_mode == "long"
             and run.state == "PUBLISH_READY"
             and run.objective_gates_passed
-            for run in evidence.founder_runs
+            for run in founder_rows
         )
         cohort_approvals = sum(
             row.approves_fidelity_and_personalization and row.objective_gates_passed
-            for row in evidence.cohort
+            for row in cohort_rows
         )
         cohort_publish = sum(
             row.willing_to_publish
             and row.minor_revisions <= 1
             and row.objective_gates_passed
-            for row in evidence.cohort
+            for row in cohort_rows
         )
         critical_failures = sum(item.critical_failure for item in evidence.fixtures)
         critical_failures += sum(run.critical_failure for run in evidence.founder_runs)
@@ -108,13 +129,13 @@ class ReleaseBar:
             "first_pass_without_major_defect": first_pass_without_major >= 0.90,
             "founder_three_short_publish_ready": short_ready >= 3,
             "founder_three_long_publish_ready": long_ready >= 3,
-            "private_cohort_size": len(evidence.cohort) >= 10,
+            "private_cohort_size": len(cohort_rows) >= 10,
             "private_cohort_eight_approve": cohort_approvals >= 8,
             "private_cohort_seven_publish": cohort_publish >= 7,
             "all_objective_gates": all(
-                run.objective_gates_passed for run in evidence.founder_runs
+                run.objective_gates_passed for run in founder_rows
             )
-            and all(row.objective_gates_passed for row in evidence.cohort),
+            and all(row.objective_gates_passed for row in cohort_rows),
             "zero_critical_failures": critical_failures == 0,
         }
         worst_slice = self._worst_slice(evidence.fixtures)

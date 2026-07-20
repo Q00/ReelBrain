@@ -86,16 +86,13 @@ uv run reelbrain release verify-fixtures
 uv run reelbrain release record-founder \
   --run-id founder-short-1 \
   --output-mode short \
-  --state PUBLISH_READY \
-  --objective-gates-passed
-uv run reelbrain release record-cohort \
-  --creator-id creator-1 \
-  --approves \
-  --willing-to-publish \
-  --minor-revisions 1 \
-  --objective-gates-passed
+  --package ./.reelbrain/projects/founder-short-1
+uv run reelbrain release record-cohort-response \
+  --response ./cohort-responses/creator-1.json
 uv run reelbrain release evaluate
 ```
+
+Founder evidence is derived from the actual package, validation report, creator approval receipt, and final-video digest. Cohort response files require a unique creator id, reviewed package digest, and attestation receipt. Duplicate package or creator rows cannot inflate thresholds.
 
 The evaluator cannot be satisfied by unit tests alone. V1 requires real founder dogfood evidence for at least three short and three long videos, plus a ten-creator private cohort meeting the Seed thresholds.
 
