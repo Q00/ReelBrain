@@ -4,6 +4,16 @@ version = "0.1.0"
 description = "Local-first ReelBrain runtime primitives"
 requires-python = ">=3.11"
 
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project.scripts]
+reelbrain = "reelbrain.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8.3"]
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
