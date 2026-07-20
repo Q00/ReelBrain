@@ -17,6 +17,10 @@ class SemanticFixtureResult:
     major_defect: bool = False
     critical_failure: bool = False
     slice_name: str = "default"
+    command: str | None = None
+    evidence_ref: str | None = None
+    commit: str | None = None
+    duration_seconds: float | None = None
 
 
 @dataclass(frozen=True)
@@ -174,4 +178,3 @@ class ReleaseBar:
             encoding="utf-8",
         )
         return reports
-

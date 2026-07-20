@@ -155,6 +155,28 @@ def release_fixture(args) -> int:
     return 0
 
 
+def release_verify_fixtures(args) -> int:
+    results = evidence_store(args).verify_required_fixtures(working_dir=Path.cwd())
+    print(
+        json.dumps(
+            {
+                "passed": all(result.passed for result in results),
+                "fixtures": [
+                    {
+                        "fixture_id": result.fixture_id,
+                        "passed": result.passed,
+                        "evidence_ref": result.evidence_ref,
+                    }
+                    for result in results
+                ],
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
+    return 0 if all(result.passed for result in results) else 2
+
+
 def release_founder(args) -> int:
     evidence_store(args).record_founder_run(
         FounderDogfoodRun(
@@ -248,6 +270,12 @@ def build_parser() -> argparse.ArgumentParser:
     boolean_flags(fixture, "critical-failure")
     fixture.add_argument("--slice", default="default")
     fixture.set_defaults(func=release_fixture)
+
+    verify_fixtures = release_commands.add_parser("verify-fixtures")
+    verify_fixtures.add_argument(
+        "--evidence-dir", type=Path, default=default_evidence_dir()
+    )
+    verify_fixtures.set_defaults(func=release_verify_fixtures)
 
     founder = release_commands.add_parser("record-founder")
     founder.add_argument("--evidence-dir", type=Path, default=default_evidence_dir())

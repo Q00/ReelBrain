@@ -3,9 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from datetime import datetime, timezone
+from hashlib import sha256
 import json
 from pathlib import Path
 import platform
+import subprocess
+import sys
+from time import monotonic
+from typing import Callable, Sequence
 
 from .release import (
     CohortFeedback,
@@ -32,6 +38,100 @@ class ReleaseEvidenceStore:
 
     def record_fixture(self, fixture: SemanticFixtureResult) -> None:
         self.append("semantic_fixture", asdict(fixture))
+
+    def verify_required_fixtures(
+        self,
+        *,
+        working_dir: Path | str,
+        runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+    ) -> tuple[SemanticFixtureResult, ...]:
+        """Execute the Seed's six machine-verifiable AC commands and persist proof."""
+
+        root = Path(working_dir).resolve()
+        fixture_specs: Sequence[tuple[str, str, str]] = (
+            ("ac1-short-form", "tests/test_short_form_publish_ready.py", "short-form"),
+            ("ac2-long-form", "tests/test_long_form_publish_ready.py", "long-form"),
+            ("ac3-memory", "tests/test_creator_memory_contract.py", "personalization"),
+            ("ac4-governance", "tests/test_governance_runtime.py", "governance"),
+            (
+                "ac5-lifecycle",
+                "tests/test_verification_and_run_lifecycle.py",
+                "lifecycle",
+            ),
+            ("ac6-sleep", "tests/test_sleep_promotion_contract.py", "sleep"),
+        )
+        commit_result = runner(
+            ["git", "rev-parse", "HEAD"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        commit = commit_result.stdout.strip() if commit_result.returncode == 0 else "unknown"
+        run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
+        report_dir = self.root / "fixture-runs"
+        report_dir.mkdir(parents=True, exist_ok=True)
+        report_path = report_dir / f"{run_id}.json"
+        rows: list[dict[str, object]] = []
+        pending: list[tuple[str, bool, str, float, str]] = []
+        for fixture_id, test_path, slice_name in fixture_specs:
+            command = [sys.executable, "-m", "pytest", "-q", test_path]
+            started = monotonic()
+            completed = runner(
+                command,
+                cwd=root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            duration = monotonic() - started
+            output = f"{completed.stdout}\n{completed.stderr}".strip()
+            output_digest = sha256(output.encode("utf-8")).hexdigest()
+            passed = completed.returncode == 0
+            rows.append(
+                {
+                    "fixture_id": fixture_id,
+                    "command": command,
+                    "returncode": completed.returncode,
+                    "passed": passed,
+                    "duration_seconds": duration,
+                    "output_sha256": output_digest,
+                    "output": output,
+                    "slice_name": slice_name,
+                }
+            )
+            pending.append((fixture_id, passed, slice_name, duration, " ".join(command)))
+        report_path.write_text(
+            json.dumps(
+                {
+                    "run_id": run_id,
+                    "working_dir": str(root),
+                    "commit": commit,
+                    "fixtures": rows,
+                },
+                indent=2,
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+        results = tuple(
+            SemanticFixtureResult(
+                fixture_id=f"{fixture_id}:{run_id}",
+                passed=passed,
+                must_pass=True,
+                first_pass=True,
+                major_defect=not passed,
+                slice_name=slice_name,
+                command=command,
+                evidence_ref=str(report_path),
+                commit=commit,
+                duration_seconds=duration,
+            )
+            for fixture_id, passed, slice_name, duration, command in pending
+        )
+        for result in results:
+            self.record_fixture(result)
+        return results
 
     def record_founder_run(self, run: FounderDogfoodRun) -> None:
         self.append("founder_run", asdict(run))
@@ -70,4 +170,3 @@ class ReleaseEvidenceStore:
 
     def evaluate_and_write(self) -> dict[str, Path]:
         return ReleaseBar().write_reports(self.load(), self.root / "reports")
-

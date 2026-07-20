@@ -66,6 +66,7 @@ Release evidence is append-only and stored locally under `.reelbrain/release-evi
 
 ```bash
 uv run reelbrain release record-governance --receipt governance-clean-1
+uv run reelbrain release verify-fixtures
 uv run reelbrain release record-founder \
   --run-id founder-short-1 \
   --output-mode short \
