@@ -192,3 +192,32 @@ def test_inconsistent_examples_do_not_create_a_high_confidence_proposal():
     assert store.propose(
         creator_id="creator-1", category="pacing", scope=SHORT_TECH
     ) is None
+
+
+def test_writes_all_declared_memory_artifacts_and_transfer_report(tmp_path):
+    store = PreferenceStore()
+    record_examples(store, 2)
+    store.confirm(
+        store.propose(creator_id="creator-1", category="caption_style", scope=SHORT_TECH)
+    )
+
+    artifacts = store.write_artifacts(
+        tmp_path,
+        creator_id="creator-1",
+        evaluation_category="caption_style",
+        evaluation_context=SHORT_TECH,
+        frozen_baseline_value="clean-white",
+    )
+
+    assert set(artifacts) == {
+        "preference_ledger",
+        "feedback_events",
+        "preference_snapshots",
+        "deletion_tombstones",
+        "personalized_vs_baseline_evaluation",
+    }
+    assert all(path.is_file() for path in artifacts.values())
+    report = json.loads(artifacts["personalized_vs_baseline_evaluation"].read_text())
+    assert report["frozen_baseline"] == "clean-white"
+    assert report["personalized_value"] == "yellow-keyword-emphasis"
+    assert report["preference_applied"] is True

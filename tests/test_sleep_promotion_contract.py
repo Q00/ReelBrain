@@ -160,3 +160,22 @@ def test_configuration_is_immutable_after_signing():
 
     with pytest.raises(TypeError):
         bundle.configuration["prompts"] = {"showrunner": "mutated"}
+
+
+def test_writes_all_declared_sleep_promotion_artifacts(tmp_path):
+    promoter = make_promoter()
+    bundle = signed_bundle(promoter)
+    evidence = passing_promotion_evidence()
+    promoter.promote(bundle, evidence)
+
+    artifacts = promoter.write_artifacts(tmp_path, bundle=bundle, evidence=evidence)
+
+    assert set(artifacts) == {
+        "signed_configuration_bundle",
+        "bundle_diff",
+        "promotion_evidence",
+        "canary_report",
+        "rollback_receipt",
+        "sealed_fixture_report",
+    }
+    assert all(path.is_file() for path in artifacts.values())

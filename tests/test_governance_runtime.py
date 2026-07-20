@@ -2628,3 +2628,50 @@ def test_payload_containment_receipts_do_not_repr_secret_material(tmp_path):
 
     assert "sk-live-123" not in repr(request)
     assert "sk-live-123" not in repr(decision)
+
+
+def test_runtime_guard_mediates_real_tool_execution_and_writes_declared_audit_artifacts(
+    tmp_path,
+):
+    from reelbrain.runtime_guard import RuntimeGuard
+
+    guard = RuntimeGuard(
+        workspace_root=tmp_path,
+        project_id="project-1",
+        creator_id="creator-1",
+        tool_names=("ffprobe",),
+    )
+
+    result = guard.run_tool(["ffprobe", "-version"])
+    artifacts = guard.write_audit_artifacts(
+        tmp_path / "governance",
+        rights_manifest=[{"asset_id": "source", "status": "approved"}],
+    )
+
+    assert result.returncode == 0
+    assert set(artifacts) == {
+        "acp_registry",
+        "capability_receipts",
+        "toolbox_manifests",
+        "provider_receipts",
+        "budget_ledger",
+        "rights_manifest",
+        "denial_logs",
+        "approval_records",
+    }
+    assert all(path.is_file() for path in artifacts.values())
+    assert any(receipt["reason"] == "authorized_tool_execution" for receipt in guard.capability_receipts)
+
+
+def test_runtime_guard_denies_unregistered_os_command_before_execution(tmp_path):
+    from reelbrain.runtime_guard import RuntimeGuard
+
+    guard = RuntimeGuard(
+        workspace_root=tmp_path,
+        project_id="project-1",
+        creator_id="creator-1",
+        tool_names=("ffprobe",),
+    )
+
+    with pytest.raises(PermissionError, match="tool_not_registered_in_acp"):
+        guard.run_tool(["curl", "https://example.com"])

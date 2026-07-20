@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from hashlib import sha256
 import hmac
 import json
+from pathlib import Path
 from types import MappingProxyType
 from typing import Mapping
 from uuid import uuid4
@@ -257,6 +258,95 @@ class SleepPromoter:
         self.rollbacks.append(receipt)
         return receipt
 
+    def write_artifacts(
+        self,
+        output_dir: Path | str,
+        *,
+        bundle: ConfigurationBundle,
+        evidence: PromotionEvidence,
+    ) -> dict[str, Path]:
+        """Persist the complete evidence bundle required for audit/replay."""
+
+        if not self.signer.verify(bundle):
+            raise ValueError("sleep_bundle_signature_invalid")
+        root = Path(output_dir).resolve()
+        root.mkdir(parents=True, exist_ok=True)
+        paths = {
+            "signed_configuration_bundle": root / "signed_configuration_bundle.json",
+            "bundle_diff": root / "bundle_diff.json",
+            "promotion_evidence": root / "promotion_evidence.json",
+            "canary_report": root / "canary_report.json",
+            "rollback_receipt": root / "rollback_receipt.json",
+            "sealed_fixture_report": root / "sealed_fixture_report.json",
+        }
+        paths["signed_configuration_bundle"].write_text(
+            json.dumps(
+                {
+                    "bundle_id": bundle.bundle_id,
+                    "version": bundle.version,
+                    "parent_bundle_id": bundle.parent_bundle_id,
+                    "configuration": dict(bundle.configuration),
+                    "compatibility": dict(bundle.compatibility),
+                    "digest": bundle.digest,
+                    "signature": bundle.signature,
+                    "signer": bundle.signer,
+                },
+                indent=2,
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+        paths["bundle_diff"].write_text(
+            json.dumps(
+                {
+                    "parent_bundle_id": bundle.parent_bundle_id,
+                    "changed_families": sorted(bundle.configuration),
+                },
+                indent=2,
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+        paths["promotion_evidence"].write_text(
+            json.dumps(evidence.__dict__, indent=2, sort_keys=True), encoding="utf-8"
+        )
+        paths["canary_report"].write_text(
+            json.dumps(
+                {
+                    "opted_in": evidence.opted_in_canary,
+                    "shadow_passed": evidence.shadow_passed,
+                    "canary_passed": evidence.canary_passed,
+                    "applies_to_new_runs_only": True,
+                },
+                indent=2,
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+        rollback_payload = (
+            self.rollbacks[-1].__dict__
+            if self.rollbacks
+            else {"rollback_verified": evidence.rollback_verified, "status": "fixture_verified"}
+        )
+        paths["rollback_receipt"].write_text(
+            json.dumps(rollback_payload, indent=2, sort_keys=True), encoding="utf-8"
+        )
+        paths["sealed_fixture_report"].write_text(
+            json.dumps(
+                {
+                    "report_id": evidence.sealed_fixture_report_id,
+                    "sealed": bool(evidence.sealed_fixture_report_id),
+                    "regression_passed": evidence.regression_passed,
+                    "repeated_trials": evidence.repeated_trials,
+                    "repeated_trial_pass_rate": evidence.repeated_trial_pass_rate,
+                },
+                indent=2,
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+        return paths
+
 
 def passing_promotion_evidence() -> PromotionEvidence:
     return PromotionEvidence(
@@ -272,4 +362,3 @@ def passing_promotion_evidence() -> PromotionEvidence:
         rollback_verified=True,
         sealed_fixture_report_id="sealed-fixture-report-1",
     )
-

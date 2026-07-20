@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from enum import StrEnum
 from hashlib import sha256
 import json
+from pathlib import Path
 from typing import Iterable, Literal
 from uuid import uuid4
 
@@ -36,6 +37,9 @@ GateName = Literal[
     "steering",
     "deletion",
     "safety",
+    "interruption",
+    "retry",
+    "deterministic_resume",
 ]
 
 REQUIRED_GATES: tuple[GateName, ...] = (
@@ -50,6 +54,9 @@ REQUIRED_GATES: tuple[GateName, ...] = (
     "steering",
     "deletion",
     "safety",
+    "interruption",
+    "retry",
+    "deterministic_resume",
 )
 
 
@@ -107,6 +114,7 @@ class RunLedger:
     costs: list[str] = field(default_factory=list)
     provider_calls: list[str] = field(default_factory=list)
     artifact_hashes: dict[str, str] = field(default_factory=dict)
+    project_manifest: dict[str, object] = field(default_factory=dict)
     _completed_keys: set[str] = field(default_factory=set, repr=False)
 
     @classmethod
@@ -197,6 +205,7 @@ class RunLedger:
                 "checkpoints": [asdict(item) for item in self.checkpoints],
             },
             "verification_report": [asdict(item) for item in self.attempts],
+            "project_manifest": dict(self.project_manifest),
             "retry_report": {
                 "first_attempt": asdict(self.attempts[0]) if self.attempts else None,
                 "repaired_attempts": [
@@ -205,6 +214,64 @@ class RunLedger:
             },
             "artifact_hashes": dict(self.artifact_hashes),
         }
+
+    def set_project_manifest(
+        self,
+        *,
+        sources: dict[str, str],
+        rights_manifest_digest: str,
+        preference_snapshot_id: str,
+        tool_config_digests: dict[str, str],
+    ) -> None:
+        self.project_manifest = {
+            "project_id": self.project_id,
+            "creator_id": self.creator_id,
+            "sources": dict(sources),
+            "rights_manifest_digest": rights_manifest_digest,
+            "preference_snapshot_id": preference_snapshot_id,
+            "tool_config_digests": dict(tool_config_digests),
+            "run_id": self.run_id,
+            "epoch": self.epoch,
+        }
+
+    def write_artifacts(self, output_dir: Path | str) -> dict[str, Path]:
+        root = Path(output_dir).resolve()
+        root.mkdir(parents=True, exist_ok=True)
+        bundle = self.audit_bundle()
+        paths = {
+            "run_ledger": root / "run_ledger.json",
+            "project_manifest": root / "project_manifest.json",
+            "verification_report": root / "verification_report.json",
+            "retry_report": root / "retry_report.json",
+            "checkpoint_snapshots": root / "checkpoint_snapshots.json",
+            "audit_bundle": root / "audit_bundle.json",
+        }
+        paths["run_ledger"].write_text(
+            json.dumps(bundle["run_ledger"], indent=2, sort_keys=True, default=str),
+            encoding="utf-8",
+        )
+        paths["project_manifest"].write_text(
+            json.dumps(bundle["project_manifest"], indent=2, sort_keys=True, default=str),
+            encoding="utf-8",
+        )
+        paths["verification_report"].write_text(
+            json.dumps(bundle["verification_report"], indent=2, sort_keys=True, default=str),
+            encoding="utf-8",
+        )
+        paths["retry_report"].write_text(
+            json.dumps(bundle["retry_report"], indent=2, sort_keys=True, default=str),
+            encoding="utf-8",
+        )
+        paths["checkpoint_snapshots"].write_text(
+            json.dumps(
+                bundle["run_ledger"]["checkpoints"], indent=2, sort_keys=True, default=str
+            ),
+            encoding="utf-8",
+        )
+        paths["audit_bundle"].write_text(
+            json.dumps(bundle, indent=2, sort_keys=True, default=str), encoding="utf-8"
+        )
+        return paths
 
 
 class VerificationHarness:
@@ -277,4 +344,3 @@ def passing_gate_results() -> tuple[GateResult, ...]:
         GateResult(name=name, passed=True, evidence=(f"fixture:{name}:pass",))
         for name in REQUIRED_GATES
     )
-

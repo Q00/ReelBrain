@@ -141,3 +141,28 @@ def test_publish_ready_can_be_revoked_but_never_reopened_silently():
     assert ledger.state == RunState.REVOKED
     with pytest.raises(ValueError, match="invalid_run_transition"):
         ledger.transition(RunState.DRAFT, actor="agent", reason="silent_reopen")
+
+
+def test_writes_project_manifest_and_every_declared_lifecycle_artifact(tmp_path):
+    ledger = RunLedger.create(project_id="project-1", creator_id="creator-1")
+    ledger.set_project_manifest(
+        sources={"primary_video": "sha256:source"},
+        rights_manifest_digest="sha256:rights",
+        preference_snapshot_id="snapshot-1",
+        tool_config_digests={"ffmpeg": "sha256:ffmpeg"},
+    )
+    harness = VerificationHarness(ledger)
+    harness.auto_verify(passing_gate_results(), epoch=ledger.epoch)
+    ledger.checkpoint(epoch=ledger.epoch, stage="rendered", payload={"artifact": "short"})
+
+    artifacts = ledger.write_artifacts(tmp_path)
+
+    assert set(artifacts) == {
+        "run_ledger",
+        "project_manifest",
+        "verification_report",
+        "retry_report",
+        "checkpoint_snapshots",
+        "audit_bundle",
+    }
+    assert all(path.is_file() for path in artifacts.values())

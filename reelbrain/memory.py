@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 import json
+from pathlib import Path
 from typing import Iterable, Literal
 from uuid import uuid4
 
@@ -348,6 +349,96 @@ class PreferenceStore:
             imported.append(preference)
         return tuple(imported)
 
+    def write_artifacts(
+        self,
+        output_dir: Path | str,
+        *,
+        creator_id: str,
+        evaluation_category: str,
+        evaluation_context: PreferenceScope,
+        frozen_baseline_value: str,
+    ) -> dict[str, Path]:
+        """Persist the inspectable memory contract and transfer evaluation."""
+
+        root = Path(output_dir).resolve()
+        root.mkdir(parents=True, exist_ok=True)
+        preferences = self.inspect(creator_id, include_disabled=True)
+        personalized = self.resolve(
+            creator_id=creator_id,
+            category=evaluation_category,
+            context=evaluation_context,
+            default=frozen_baseline_value,
+        )
+        artifacts = {
+            "preference_ledger": root / "preference_ledger.json",
+            "feedback_events": root / "feedback_events.json",
+            "preference_snapshots": root / "preference_snapshots.json",
+            "deletion_tombstones": root / "deletion_tombstones.json",
+            "personalized_vs_baseline_evaluation": root
+            / "personalized_vs_baseline_evaluation.json",
+        }
+        artifacts["preference_ledger"].write_text(
+            json.dumps(
+                [
+                    {**asdict(item), "scope": asdict(item.scope)}
+                    for item in preferences
+                ],
+                indent=2,
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+        creator_events = [event for event in self._events if event.creator_id == creator_id]
+        artifacts["feedback_events"].write_text(
+            json.dumps(
+                [{**asdict(item), "scope": asdict(item.scope)} for item in creator_events],
+                indent=2,
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+        artifacts["preference_snapshots"].write_text(
+            json.dumps(
+                {
+                    "creator_id": creator_id,
+                    "snapshot_version": max((item.version for item in preferences), default=0),
+                    "active_preference_ids": [
+                        item.preference_id for item in preferences if item.status == "active"
+                    ],
+                },
+                indent=2,
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+        artifacts["deletion_tombstones"].write_text(
+            json.dumps(
+                [asdict(item) for item in self._tombstones.values() if item.creator_id == creator_id],
+                indent=2,
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+        artifacts["personalized_vs_baseline_evaluation"].write_text(
+            json.dumps(
+                {
+                    "creator_id": creator_id,
+                    "category": evaluation_category,
+                    "context": asdict(evaluation_context),
+                    "frozen_baseline": frozen_baseline_value,
+                    "personalized_value": personalized.value,
+                    "preference_applied": personalized.source
+                    in {"explicit_preference", "confirmed_inferred_preference"},
+                    "source": personalized.source,
+                    "preference_id": personalized.preference_id,
+                },
+                indent=2,
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+        return artifacts
+
     def _require_active_or_disabled(self, preference_id: str) -> Preference:
         if preference_id in self._tombstones:
             raise ValueError("preference_deleted")
@@ -355,4 +446,3 @@ class PreferenceStore:
             return self._preferences[preference_id]
         except KeyError as exc:
             raise KeyError("preference_not_found") from exc
-

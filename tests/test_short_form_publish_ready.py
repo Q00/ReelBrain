@@ -11,6 +11,7 @@ from reelbrain.editing import (
     word_error_rate,
 )
 from tests.media_fixtures import synthetic_video
+from reelbrain.transcription import TranscriptChunk
 
 
 def segment(index, start, *, takeaway=None, self_contained=True, complete=True):
@@ -81,6 +82,17 @@ def test_builds_three_real_diverse_9x16_h264_aac_candidates(source_video, tmp_pa
     audit = json.loads(package.audit_report.read_text())
     assert audit["candidate_count"] == 3
     assert audit["diverse_takeaways"] is True
+    for name in (
+        "governance_acp_registry",
+        "governance_capability_receipts",
+        "governance_toolbox_manifests",
+        "governance_provider_receipts",
+        "governance_budget_ledger",
+        "governance_rights_manifest",
+        "governance_denial_logs",
+        "governance_approval_records",
+    ):
+        assert package.extras[name].is_file()
 
 
 def test_selection_rejects_mid_thought_or_non_self_contained_candidates():
@@ -139,3 +151,51 @@ def test_rights_are_non_waivable_for_short_export(source_video, tmp_path):
             rights=(denied,),
         )
 
+
+def test_creator_can_supply_only_video_and_runtime_discovers_publish_ready_highlights(
+    source_video, tmp_path
+):
+    class FixtureSTT:
+        name = "fixture-stt"
+
+        def transcribe(self, video_path):
+            assert video_path == source_video.resolve()
+            return (
+                TranscriptChunk(
+                    "auto-1",
+                    10,
+                    45,
+                    "Memory is a behavioral prior, not evidence. This distinction prevents false certainty.",
+                ),
+                TranscriptChunk(
+                    "auto-2",
+                    60,
+                    95,
+                    "ACP translates tool capabilities for agents. The broker still enforces every side effect.",
+                ),
+                TranscriptChunk(
+                    "auto-3",
+                    110,
+                    145,
+                    "Sleep improves bounded configurations offline. Hidden evaluation and rollback keep it safe.",
+                ),
+            )
+
+    package = LocalPackageBuilder(output_fps=2).build_short_from_video(
+        source=source_video,
+        stt_provider=FixtureSTT(),
+        output_dir=tmp_path / "automatic-package",
+        project_id="project-1",
+        creator_id="creator-1",
+        rights=rights(),
+        creator_approval_receipt="creator-approved-short-1",
+        preferred_terms=("memory", "agents", "sleep"),
+    )
+
+    audit = json.loads(package.audit_report.read_text())
+    assert audit["status"] == "PUBLISH_READY"
+    assert audit["highlight_discovery"] == "agent_fan_out"
+    assert audit["source_faithful"] is True
+    assert audit["meaning_changing_caption_errors"] == 0
+    assert package.extras["source_transcript"].is_file()
+    assert package.extras["agent_assessments"].is_file()

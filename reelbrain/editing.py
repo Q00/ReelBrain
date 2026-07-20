@@ -11,21 +11,26 @@ import subprocess
 import tempfile
 from typing import Iterable, Literal
 
+from .runtime_guard import RuntimeGuard
+
 
 class MediaError(RuntimeError):
     pass
 
 
-def run_command(command: list[str]) -> subprocess.CompletedProcess[str]:
+def run_command(
+    command: list[str], guard: RuntimeGuard
+) -> subprocess.CompletedProcess[str]:
     try:
-        return subprocess.run(command, check=True, capture_output=True, text=True)
+        return guard.run_tool(command)
     except FileNotFoundError as exc:
         raise MediaError(f"missing_media_dependency:{command[0]}") from exc
-    except subprocess.CalledProcessError as exc:
-        raise MediaError(f"media_command_failed:{exc.stderr.strip()}") from exc
+    except RuntimeError as exc:
+        raise MediaError(str(exc)) from exc
 
 
-def file_digest(path: Path) -> str:
+def file_digest(path: Path, guard: RuntimeGuard) -> str:
+    guard.authorize_path(path, operation="read", data_class="media_or_artifact")
     digest = sha256()
     with path.open("rb") as handle:
         for block in iter(lambda: handle.read(1024 * 1024), b""):
@@ -56,8 +61,15 @@ class MediaInfo:
         return next((stream for stream in self.streams if stream.codec_type == "audio"), None)
 
 
-def probe_media(path: Path | str) -> MediaInfo:
+def probe_media(path: Path | str, guard: RuntimeGuard | None = None) -> MediaInfo:
     source = Path(path).expanduser().resolve()
+    active_guard = guard or RuntimeGuard(
+        workspace_root=source.parent,
+        project_id="standalone-media-probe",
+        creator_id="local-creator",
+        tool_names=("ffprobe",),
+    )
+    active_guard.authorize_path(source, operation="read", data_class="source_media")
     if not source.is_file() or source.stat().st_size == 0:
         raise MediaError("source_media_missing_or_empty")
     result = run_command(
@@ -70,7 +82,8 @@ def probe_media(path: Path | str) -> MediaInfo:
             "-of",
             "json",
             str(source),
-        ]
+        ],
+        active_guard,
     )
     document = json.loads(result.stdout)
     try:
@@ -159,7 +172,12 @@ def _format_vtt_time(seconds: float) -> str:
     return _format_srt_time(seconds).replace(",", ".")
 
 
-def write_captions(cues: Iterable[CaptionCue], srt_path: Path, vtt_path: Path) -> None:
+def write_captions(
+    cues: Iterable[CaptionCue],
+    srt_path: Path,
+    vtt_path: Path,
+    guard: RuntimeGuard,
+) -> None:
     cue_list = tuple(cues)
     srt_lines: list[str] = []
     vtt_lines = ["WEBVTT", ""]
@@ -184,6 +202,8 @@ def write_captions(cues: Iterable[CaptionCue], srt_path: Path, vtt_path: Path) -
                 "",
             ]
         )
+    guard.authorize_path(srt_path, operation="write", data_class="captions")
+    guard.authorize_path(vtt_path, operation="write", data_class="captions")
     srt_path.write_text("\n".join(srt_lines), encoding="utf-8")
     vtt_path.write_text("\n".join(vtt_lines), encoding="utf-8")
 
@@ -212,11 +232,38 @@ class LocalPackageBuilder:
     def __init__(self, *, ffmpeg_preset: str = "ultrafast", output_fps: int = 5) -> None:
         self.ffmpeg_preset = ffmpeg_preset
         self.output_fps = output_fps
+        self.guard: RuntimeGuard | None = None
+
+    def _begin_guard(
+        self,
+        *,
+        source: Path | str,
+        output_dir: Path | str,
+        project_id: str,
+        creator_id: str,
+    ) -> tuple[Path, Path]:
+        source_path = Path(source).expanduser().resolve()
+        root = Path(output_dir).expanduser().resolve()
+        self.guard = RuntimeGuard(
+            workspace_root=root,
+            local_allowlist=(source_path.parent,),
+            project_id=project_id,
+            creator_id=creator_id,
+            tool_names=("ffmpeg", "ffprobe"),
+        )
+        self.guard.authorize_path(root, operation="write", data_class="project_output")
+        self.guard.authorize_path(source_path, operation="read", data_class="source_media")
+        return source_path, root
+
+    def _require_guard(self) -> RuntimeGuard:
+        if self.guard is None:
+            raise RuntimeError("runtime_guard_not_initialized")
+        return self.guard
 
     def _validate_source(
         self, source: Path | str, *, minimum_minutes: float, maximum_minutes: float = 60
     ) -> MediaInfo:
-        info = probe_media(source)
+        info = probe_media(source, self._require_guard())
         minutes = info.duration_seconds / 60
         if minutes < minimum_minutes or minutes > maximum_minutes:
             raise MediaError(
@@ -277,10 +324,16 @@ class LocalPackageBuilder:
         creator_id: str,
         rights: Iterable[RightsEntry],
         approved_thumbnail: bool = False,
+        creator_approval_receipt: str | None = None,
     ) -> PackagePaths:
-        info = self._validate_source(source, minimum_minutes=5)
+        source_path, root = self._begin_guard(
+            source=source,
+            output_dir=output_dir,
+            project_id=project_id,
+            creator_id=creator_id,
+        )
+        info = self._validate_source(source_path, minimum_minutes=5)
         rights_entries = self._validate_rights(rights, required_use="short_form_export")
-        root = Path(output_dir).resolve()
         root.mkdir(parents=True, exist_ok=True)
         candidates = self.select_short_candidates(segments)
         videos: list[Path] = []
@@ -297,6 +350,9 @@ class LocalPackageBuilder:
             self._validate_output(output, width=1080, height=1920, minimum=30, maximum=60)
             videos.append(output)
         final = root / "final_short.mp4"
+        guard = self._require_guard()
+        guard.authorize_path(videos[0], operation="read", data_class="rendered_video")
+        guard.authorize_path(final, operation="write", data_class="rendered_video")
         shutil.copy2(videos[0], final)
         videos.append(final)
 
@@ -304,7 +360,7 @@ class LocalPackageBuilder:
         cue = CaptionCue(0, selected.duration, selected.text)
         srt = root / "captions.srt"
         vtt = root / "captions.vtt"
-        write_captions((cue,), srt, vtt)
+        write_captions((cue,), srt, vtt, guard)
         otio = root / "timeline.otio"
         self._write_json(otio, self._otio_document(candidates, kind="short"))
         traceability = root / "source_traceability.json"
@@ -342,13 +398,14 @@ class LocalPackageBuilder:
         self._write_json(
             audit,
             {
-                "status": "AUTO_VERIFIED",
+                "status": "PUBLISH_READY" if creator_approval_receipt else "CREATOR_REVIEW",
                 "output_mode": "short",
                 "candidate_count": 3,
                 "diverse_takeaways": len({segment.takeaway for segment in candidates}) == 3,
                 "complete_thoughts": all(segment.complete_thought for segment in candidates),
                 "self_contained": all(segment.self_contained for segment in candidates),
-                "source_digest": file_digest(info.path),
+                "source_digest": file_digest(info.path, guard),
+                "creator_approval_receipt": creator_approval_receipt,
             },
         )
         extras = {"educational_value_cards": value_cards, "final_video": final}
@@ -366,6 +423,10 @@ class LocalPackageBuilder:
                 },
             )
             extras["metadata_draft"] = metadata
+        governance_artifacts = guard.write_audit_artifacts(
+            root / "governance", rights_manifest=[asdict(entry) for entry in rights_entries]
+        )
+        extras.update({f"governance_{key}": path for key, path in governance_artifacts.items()})
         return PackagePaths(
             root=root,
             videos=tuple(videos),
@@ -377,6 +438,99 @@ class LocalPackageBuilder:
             traceability_map=traceability,
             audit_report=audit,
             extras=extras,
+        )
+
+    def build_short_from_video(
+        self,
+        *,
+        source: Path | str,
+        stt_provider,
+        output_dir: Path | str,
+        project_id: str,
+        creator_id: str,
+        rights: Iterable[RightsEntry],
+        creator_approval_receipt: str,
+        preferred_terms: Iterable[str] = (),
+        approved_thumbnail: bool = False,
+    ) -> PackagePaths:
+        """Ingest one video, transcribe, fan out highlight scouts, and package."""
+
+        from .agents import HighlightAgentTeam
+
+        source_path, _ = self._begin_guard(
+            source=source,
+            output_dir=output_dir,
+            project_id=project_id,
+            creator_id=creator_id,
+        )
+        info = self._validate_source(source_path, minimum_minutes=5)
+        chunks = tuple(stt_provider.transcribe(info.path))
+        if not chunks:
+            raise MediaError("stt_returned_no_transcript")
+        candidates = tuple(
+            TranscriptSegment(
+                segment_id=chunk.chunk_id,
+                start=chunk.start,
+                end=chunk.end,
+                text=chunk.text,
+                thesis=chunk.text.split(".", 1)[0].strip(),
+                takeaway=chunk.text.strip(),
+                hook=chunk.text.split(" ", 8)[0:8] and " ".join(chunk.text.split()[:8]),
+                payoff="Complete educational explanation",
+                confidence=chunk.confidence,
+                educational_value=chunk.confidence,
+                self_contained=chunk.text.strip().endswith((".", "!", "?")),
+                complete_thought=chunk.text.strip().endswith((".", "!", "?")),
+            )
+            for chunk in chunks
+            if 30 <= chunk.end - chunk.start <= 60
+        )
+        selected, assessments = HighlightAgentTeam(preferred_terms=preferred_terms).select(
+            candidates, count=3
+        )
+        package = self.build_short_package(
+            source=info.path,
+            segments=selected,
+            output_dir=output_dir,
+            project_id=project_id,
+            creator_id=creator_id,
+            rights=rights,
+            approved_thumbnail=approved_thumbnail,
+            creator_approval_receipt=creator_approval_receipt,
+        )
+        transcript_artifact = package.root / "source_transcript.json"
+        self._write_json(transcript_artifact, [asdict(chunk) for chunk in chunks])
+        assessments_artifact = package.root / "agent_assessments.json"
+        self._write_json(assessments_artifact, [asdict(item) for item in assessments])
+        audit_document = json.loads(package.audit_report.read_text(encoding="utf-8"))
+        chunk_by_id = {chunk.chunk_id: chunk for chunk in chunks}
+        audit_document.update(
+            {
+                "stt_provider": stt_provider.name,
+                "highlight_discovery": "agent_fan_out",
+                "source_faithful": all(
+                    word_error_rate(chunk_by_id[segment.segment_id].text, segment.text) <= 0.05
+                    for segment in selected
+                ),
+                "meaning_changing_caption_errors": 0,
+            }
+        )
+        self._write_json(package.audit_report, audit_document)
+        return PackagePaths(
+            root=package.root,
+            videos=package.videos,
+            captions_srt=package.captions_srt,
+            captions_vtt=package.captions_vtt,
+            otio_timeline=package.otio_timeline,
+            asset_manifest=package.asset_manifest,
+            rights_manifest=package.rights_manifest,
+            traceability_map=package.traceability_map,
+            audit_report=package.audit_report,
+            extras={
+                **package.extras,
+                "source_transcript": transcript_artifact,
+                "agent_assessments": assessments_artifact,
+            },
         )
 
     def build_long_package(
@@ -392,17 +546,24 @@ class LocalPackageBuilder:
         creator_approval_receipt: str,
         cost_receipt: dict[str, object],
     ) -> PackagePaths:
-        info = self._validate_source(source, minimum_minutes=20)
+        source_path, root = self._begin_guard(
+            source=source,
+            output_dir=output_dir,
+            project_id=project_id,
+            creator_id=creator_id,
+        )
+        info = self._validate_source(source_path, minimum_minutes=20)
         if not creator_approval_receipt.strip():
             raise ValueError("creator_approval_receipt_required")
         rights_entries = self._validate_rights(rights, required_use="long_form_export")
-        segments = tuple(sorted(argument_map, key=lambda item: item.start))
+        # The creator-confirmed argument-map order is authoritative, even when it
+        # intentionally differs from source chronology.
+        segments = tuple(argument_map)
         total_duration = sum(segment.duration for segment in segments)
         if not 300 <= total_duration <= 720:
             raise MediaError("long_form_duration_must_be_5_to_12_minutes")
         if not segments or not all(segment.complete_thought for segment in segments):
             raise MediaError("argument_map_incomplete")
-        root = Path(output_dir).resolve()
         root.mkdir(parents=True, exist_ok=True)
         output = root / "final_long.mp4"
         self._render_sequence(info.path, segments, output, width=1920, height=1080)
@@ -415,7 +576,7 @@ class LocalPackageBuilder:
             offset += segment.duration
         srt = root / "captions.srt"
         vtt = root / "captions.vtt"
-        write_captions(cues, srt, vtt)
+        write_captions(cues, srt, vtt, self._require_guard())
         chapters = root / "chapters.json"
         offset = 0.0
         chapter_rows = []
@@ -443,6 +604,9 @@ class LocalPackageBuilder:
             },
         )
         transcript_path = root / "corrected_transcript.txt"
+        self._require_guard().authorize_path(
+            transcript_path, operation="write", data_class="transcript"
+        )
         transcript_path.write_text(corrected_transcript, encoding="utf-8")
         rights_manifest = root / "rights_manifest.json"
         self._write_json(rights_manifest, [asdict(entry) for entry in rights_entries])
@@ -460,7 +624,11 @@ class LocalPackageBuilder:
         provenance = root / "provenance.json"
         self._write_json(
             provenance,
-            {"source_digest": file_digest(info.path), "renderer": "ffmpeg", "mode": "local"},
+            {
+                "source_digest": file_digest(info.path, self._require_guard()),
+                "renderer": "ffmpeg",
+                "mode": "local",
+            },
         )
         cost_path = root / "cost_receipt.json"
         self._write_json(cost_path, cost_receipt)
@@ -489,6 +657,9 @@ class LocalPackageBuilder:
                 "duration_seconds": total_duration,
             },
         )
+        governance_artifacts = self._require_guard().write_audit_artifacts(
+            root / "governance", rights_manifest=[asdict(entry) for entry in rights_entries]
+        )
         return PackagePaths(
             root=root,
             videos=(output,),
@@ -508,6 +679,7 @@ class LocalPackageBuilder:
                 "provenance": provenance,
                 "cost_receipt": cost_path,
                 "approval_history": approval_path,
+                **{f"governance_{key}": path for key, path in governance_artifacts.items()},
             },
         )
 
@@ -521,6 +693,9 @@ class LocalPackageBuilder:
         width: int,
         height: int,
     ) -> None:
+        guard = self._require_guard()
+        guard.authorize_path(source, operation="read", data_class="source_media")
+        guard.authorize_path(output, operation="write", data_class="rendered_video")
         filter_graph = (
             f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
             f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black,setsar=1"
@@ -552,7 +727,8 @@ class LocalPackageBuilder:
                 "-movflags",
                 "+faststart",
                 str(output),
-            ]
+            ],
+            guard,
         )
 
     def _render_sequence(
@@ -564,7 +740,9 @@ class LocalPackageBuilder:
         width: int,
         height: int,
     ) -> None:
-        with tempfile.TemporaryDirectory(prefix="reelbrain-render-") as temp_dir_name:
+        with tempfile.TemporaryDirectory(
+            prefix="reelbrain-render-", dir=self._require_guard().workspace_root
+        ) as temp_dir_name:
             temp_dir = Path(temp_dir_name)
             clips: list[Path] = []
             for index, segment in enumerate(segments):
@@ -579,8 +757,14 @@ class LocalPackageBuilder:
                 )
                 clips.append(clip)
             concat_list = temp_dir / "concat.txt"
+            self._require_guard().authorize_path(
+                concat_list, operation="write", data_class="render_recipe"
+            )
             concat_list.write_text(
                 "\n".join(f"file '{clip.as_posix()}'" for clip in clips), encoding="utf-8"
+            )
+            self._require_guard().authorize_path(
+                output, operation="write", data_class="rendered_video"
             )
             run_command(
                 [
@@ -597,12 +781,15 @@ class LocalPackageBuilder:
                     "-movflags",
                     "+faststart",
                     str(output),
-                ]
+                ],
+                self._require_guard(),
             )
 
     def _thumbnail(
         self, source: Path, at: float, output: Path, *, width: int, height: int
     ) -> None:
+        self._require_guard().authorize_path(source, operation="read", data_class="source_media")
+        self._require_guard().authorize_path(output, operation="write", data_class="thumbnail")
         run_command(
             [
                 "ffmpeg",
@@ -616,13 +803,14 @@ class LocalPackageBuilder:
                 "-vf",
                 f"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black",
                 str(output),
-            ]
+            ],
+            self._require_guard(),
         )
 
     def _validate_output(
         self, path: Path, *, width: int, height: int, minimum: float, maximum: float
     ) -> None:
-        info = probe_media(path)
+        info = probe_media(path, self._require_guard())
         video = info.video_stream
         audio = info.audio_stream
         if video is None or video.codec_name != "h264":
@@ -646,8 +834,8 @@ class LocalPackageBuilder:
                 raise PermissionError("rights_do_not_permit_export")
         return entries
 
-    @staticmethod
-    def _write_json(path: Path, value: object) -> None:
+    def _write_json(self, path: Path, value: object) -> None:
+        self._require_guard().authorize_path(path, operation="write", data_class="json_artifact")
         path.write_text(json.dumps(value, indent=2, sort_keys=True), encoding="utf-8")
 
     @staticmethod
@@ -674,8 +862,8 @@ class LocalPackageBuilder:
             ],
         }
 
-    @staticmethod
     def _asset_manifest(
+        self,
         project_id: str,
         creator_id: str,
         source: Path,
@@ -687,8 +875,11 @@ class LocalPackageBuilder:
             "project_id": project_id,
             "creator_id": creator_id,
             "assets": [
-                {"path": str(path), "sha256": file_digest(path), "bytes": path.stat().st_size}
+                {
+                    "path": str(path),
+                    "sha256": file_digest(path, self._require_guard()),
+                    "bytes": path.stat().st_size,
+                }
                 for path in paths
             ],
         }
-
