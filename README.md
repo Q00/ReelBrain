@@ -45,6 +45,20 @@ The source must be a 5–60 minute MP4, MOV, or WebM with decodable video and au
 
 If a creator already has an SRT or VTT transcript, pass `--transcript ./source.srt`. ReelBrain validates and uses it locally as the caption/highlight reference, so Whisper is not required and no provider call occurs.
 
+Omit `--approval-receipt` to generate a local `CREATOR_REVIEW` draft. ReelBrain only reports `PUBLISH_READY` after the creator supplies an approval receipt and all objective gates pass.
+
+Before long-form rendering, ReelBrain can propose a transcript-grounded argument map without treating it as creator-approved:
+
+```bash
+uv run reelbrain plan-long ./source.mp4 \
+  --transcript ./source.srt \
+  --output ./.reelbrain/projects/demo-long-plan \
+  --project-id demo-long \
+  --creator-id founder
+```
+
+Review or edit `proposed_argument_map.json`; only the creator-confirmed version should be passed to `reelbrain long`.
+
 ## Long-form dogfood
 
 Long-form accepts a creator-confirmed argument-map JSON array using the `TranscriptSegment` fields and a corrected transcript file.

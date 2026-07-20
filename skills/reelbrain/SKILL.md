@@ -46,6 +46,8 @@ Expect three diverse 30–60 second 1080×1920 H.264/AAC candidates, a selected 
 
 Use for one 20–60 minute source plus a creator-confirmed argument map and corrected transcript. The selected output must total 5–12 minutes.
 
+If no argument map exists yet, run `reelbrain plan-long` with a creator-supplied SRT/VTT. Treat its output as a proposal only and pause for creator confirmation before rendering.
+
 Run:
 
 ```bash

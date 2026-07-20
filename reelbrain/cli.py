@@ -13,6 +13,7 @@ import sys
 from .evidence import ReleaseEvidenceStore
 from .editing import LocalPackageBuilder, RightsEntry, TranscriptSegment
 from .release import CohortFeedback, FounderDogfoodRun, SemanticFixtureResult
+from .planning import LongFormPlanBuilder
 from .setup import SetupManager
 from .transcription import LocalWhisperSTT, SubtitleFileSTT
 
@@ -102,7 +103,39 @@ def build_short(args) -> int:
         preferred_terms=args.preferred_term,
         approved_thumbnail=args.thumbnail,
     )
-    print(json.dumps({"status": "PUBLISH_READY", "package": str(package.root), "videos": [str(path) for path in package.videos]}, indent=2))
+    audit = json.loads(package.audit_report.read_text(encoding="utf-8"))
+    print(
+        json.dumps(
+            {
+                "status": audit["status"],
+                "package": str(package.root),
+                "videos": [str(path) for path in package.videos],
+            },
+            indent=2,
+        )
+    )
+    return 0
+
+
+def plan_long(args) -> int:
+    artifacts = LongFormPlanBuilder().propose(
+        source=args.source,
+        transcript_provider=SubtitleFileSTT(args.transcript),
+        output_dir=args.output,
+        project_id=args.project_id,
+        creator_id=args.creator_id,
+        preferred_terms=args.preferred_term,
+    )
+    print(
+        json.dumps(
+            {
+                "status": "CREATOR_CONFIRMATION_REQUIRED",
+                "artifacts": {name: str(path) for name, path in artifacts.items()},
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
     return 0
 
 
@@ -232,7 +265,11 @@ def build_parser() -> argparse.ArgumentParser:
     short.add_argument("--output", type=Path, required=True)
     short.add_argument("--project-id", required=True)
     short.add_argument("--creator-id", required=True)
-    short.add_argument("--approval-receipt", required=True)
+    short.add_argument(
+        "--approval-receipt",
+        default="",
+        help="Required only to advance a validated package from CREATOR_REVIEW to PUBLISH_READY.",
+    )
     short.add_argument("--rights-license", required=True)
     short.add_argument("--whisper-model", default="base")
     short.add_argument("--language")
@@ -244,6 +281,15 @@ def build_parser() -> argparse.ArgumentParser:
     short.add_argument("--preferred-term", action="append", default=[])
     short.add_argument("--thumbnail", action=argparse.BooleanOptionalAction, default=False)
     short.set_defaults(func=build_short)
+
+    long_plan = commands.add_parser("plan-long")
+    long_plan.add_argument("source", type=Path)
+    long_plan.add_argument("--transcript", type=Path, required=True)
+    long_plan.add_argument("--output", type=Path, required=True)
+    long_plan.add_argument("--project-id", required=True)
+    long_plan.add_argument("--creator-id", required=True)
+    long_plan.add_argument("--preferred-term", action="append", default=[])
+    long_plan.set_defaults(func=plan_long)
 
     long = commands.add_parser("long")
     long.add_argument("source", type=Path)

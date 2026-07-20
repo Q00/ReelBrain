@@ -298,3 +298,36 @@ Sleep promotes only bounded configurations after hidden evaluation and rollback.
     assert audit["status"] == "PUBLISH_READY"
     assert audit["stt_provider"] == "subtitle-file-stt"
     assert audit["caption_validation"]["reference_kind"] == "creator_supplied_transcript"
+
+
+def test_short_draft_without_creator_approval_stays_in_creator_review(
+    source_video, tmp_path
+):
+    class FixtureSTT:
+        name = "fixture-stt-draft"
+        official = True
+        provider = None
+        reference_kind = "gold_fixture"
+
+        def transcribe(self, video_path):
+            return tuple(
+                TranscriptChunk(
+                    f"draft-{index}",
+                    start,
+                    start + 35,
+                    f"Draft lesson {index} is a complete educational explanation.",
+                )
+                for index, start in enumerate((10, 60, 110), start=1)
+            )
+
+    package = LocalPackageBuilder(output_fps=2).build_short_from_video(
+        source=source_video,
+        stt_provider=FixtureSTT(),
+        output_dir=tmp_path / "draft-package",
+        project_id="project-draft",
+        creator_id="creator-1",
+        rights=rights(),
+        creator_approval_receipt="",
+    )
+
+    assert json.loads(package.audit_report.read_text())["status"] == "CREATOR_REVIEW"
