@@ -2798,3 +2798,47 @@ def test_toolbox_checks_equivalent_capability_before_new_tool_and_revokes_atomic
     with pytest.raises(KeyError, match="active_tool_not_found"):
         toolbox.resolve_active("caption-layout")
     assert (toolbox.disabled / "caption-layout.revoked.json").is_file()
+
+
+def test_external_stt_callback_requires_disclosed_provider_consent_before_dispatch(tmp_path):
+    from reelbrain.runtime_guard import RuntimeGuard
+
+    guard = RuntimeGuard(
+        workspace_root=tmp_path,
+        project_id="project-1",
+        creator_id="creator-1",
+        tool_names=(),
+    )
+    calls = []
+
+    with pytest.raises(PermissionError, match="provider_consent_required"):
+        guard.run_callback_tool(
+            tool_id="cloud-stt",
+            capability="stt:transcribe",
+            official=True,
+            provider="provider-a",
+            consent_receipt=None,
+            dispatch=lambda: calls.append("called"),
+        )
+
+    result = guard.run_callback_tool(
+        tool_id="cloud-stt",
+        capability="stt:transcribe",
+        official=True,
+        provider="provider-a",
+        consent_receipt={
+            "provider": "provider-a",
+            "tool_id": "cloud-stt",
+            "project_id": "project-1",
+            "creator_id": "creator-1",
+            "data_categories": ["audio"],
+            "purpose": "transcription",
+            "expected_retention": "provider request lifecycle",
+            "expected_cost": "disclosed-before-run",
+        },
+        dispatch=lambda: calls.append("called") or "transcript",
+    )
+
+    assert calls == ["called"]
+    assert result == "transcript"
+    assert guard.provider_receipts[0]["purpose"] == "transcription"

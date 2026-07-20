@@ -32,6 +32,8 @@ class LocalWhisperSTT:
     """Local Whisper CLI adapter; no cloud fallback is performed."""
 
     name = "local-whisper"
+    official = True
+    provider = None
 
     def __init__(self, *, model: str = "base", language: str | None = None) -> None:
         self.model = model

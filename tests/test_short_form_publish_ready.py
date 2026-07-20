@@ -157,6 +157,8 @@ def test_creator_can_supply_only_video_and_runtime_discovers_publish_ready_highl
 ):
     class FixtureSTT:
         name = "fixture-stt"
+        official = True
+        provider = None
 
         def transcribe(self, video_path):
             assert video_path == source_video.resolve()

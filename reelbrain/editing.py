@@ -493,11 +493,13 @@ class LocalPackageBuilder:
         creator_approval_receipt: str,
         preferred_terms: Iterable[str] = (),
         approved_thumbnail: bool = False,
+        provider_consent_receipt: dict[str, object] | None = None,
     ) -> PackagePaths:
         """Ingest one video, transcribe, fan out highlight scouts, and package."""
 
         from .agents import HighlightAgentTeam
 
+        rights_entries = tuple(rights)
         source_path, _ = self._begin_guard(
             source=source,
             output_dir=output_dir,
@@ -505,7 +507,19 @@ class LocalPackageBuilder:
             creator_id=creator_id,
         )
         info = self._validate_source(source_path, minimum_minutes=5)
-        chunks = tuple(stt_provider.transcribe(info.path))
+        chunks = tuple(
+            self._require_guard().run_callback_tool(
+                tool_id=stt_provider.name,
+                capability="stt:transcribe",
+                dispatch=lambda: stt_provider.transcribe(info.path),
+                official=bool(getattr(stt_provider, "official", False)),
+                provider=getattr(stt_provider, "provider", None),
+                consent_receipt=provider_consent_receipt,
+            )
+        )
+        stt_capability_receipts = list(self._require_guard().capability_receipts)
+        stt_provider_receipts = list(self._require_guard().provider_receipts)
+        stt_denials = list(self._require_guard().denial_logs)
         if not chunks:
             raise MediaError("stt_returned_no_transcript")
         candidates = self.segments_from_transcript_chunks(chunks)
@@ -518,9 +532,16 @@ class LocalPackageBuilder:
             output_dir=output_dir,
             project_id=project_id,
             creator_id=creator_id,
-            rights=rights,
+            rights=rights_entries,
             approved_thumbnail=approved_thumbnail,
             creator_approval_receipt=creator_approval_receipt,
+        )
+        self._require_guard().capability_receipts[0:0] = stt_capability_receipts
+        self._require_guard().provider_receipts[0:0] = stt_provider_receipts
+        self._require_guard().denial_logs[0:0] = stt_denials
+        refreshed_governance = self._require_guard().write_audit_artifacts(
+            package.root / "governance",
+            rights_manifest=[asdict(entry) for entry in rights_entries],
         )
         transcript_artifact = package.root / "source_transcript.json"
         self._write_json(transcript_artifact, [asdict(chunk) for chunk in chunks])
@@ -551,6 +572,10 @@ class LocalPackageBuilder:
             audit_report=package.audit_report,
             extras={
                 **package.extras,
+                **{
+                    f"governance_{key}": path
+                    for key, path in refreshed_governance.items()
+                },
                 "source_transcript": transcript_artifact,
                 "agent_assessments": assessments_artifact,
             },

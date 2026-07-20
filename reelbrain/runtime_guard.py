@@ -10,7 +10,7 @@ from pathlib import Path
 import shutil
 import shlex
 import subprocess
-from typing import Iterable
+from typing import Iterable, Mapping
 
 from .governance import (
     ACPRegistrySnapshot,
@@ -57,7 +57,7 @@ class RuntimeGuard:
         grants: list[ToolCapabilityGrant] = []
         self._tool_by_name: dict[str, ACPToolIdentity] = {}
         self._executable_by_name: dict[str, Path] = {}
-        official_signer = ManifestSigner(
+        self._official_signer = ManifestSigner(
             key_id="reelbrain-official-bootstrap-v1",
             key=b"reelbrain-official-bootstrap-verification-key-v1",
         )
@@ -86,11 +86,11 @@ class RuntimeGuard:
                     capabilities=("local:execute",),
                     state="approved",
                 )
-                manifest = official_signer.sign(unsigned)
+                manifest = self._official_signer.sign(unsigned)
                 toolbox_record = self.toolbox.install_official(
                     wrapper,
                     manifest,
-                    signer=official_signer,
+                    signer=self._official_signer,
                     conformance=lambda path, _: path.is_file() and os.access(path, os.X_OK),
                 )
             path = toolbox_record.artifact_path
@@ -182,6 +182,90 @@ class RuntimeGuard:
             )
         except subprocess.CalledProcessError as exc:
             raise RuntimeError(f"governed_tool_failed:{exc.stderr.strip()}") from exc
+
+    def run_callback_tool(
+        self,
+        *,
+        tool_id: str,
+        capability: str,
+        dispatch,
+        official: bool,
+        provider: str | None = None,
+        consent_receipt: Mapping[str, object] | None = None,
+    ):
+        """Authorize in-process agent/provider adapters through ACP before dispatch."""
+
+        try:
+            record = self.toolbox.resolve_active(tool_id)
+        except KeyError:
+            if not official:
+                denial = {
+                    "allowed": False,
+                    "reason": "callback_tool_not_approved",
+                    "tool_id": tool_id,
+                    "capability": capability,
+                }
+                self.denial_logs.append(denial)
+                raise PermissionError("callback_tool_not_approved")
+            bootstrap = self.toolbox.root / ".bootstrap"
+            bootstrap.mkdir(parents=True, exist_ok=True)
+            descriptor = bootstrap / f"{tool_id}.json"
+            descriptor.write_text(
+                json.dumps(
+                    {"tool_id": tool_id, "kind": "in_process_adapter", "capability": capability},
+                    sort_keys=True,
+                ),
+                encoding="utf-8",
+            )
+            manifest = self._official_signer.sign(
+                ToolManifest(
+                    tool_id=tool_id,
+                    version="builtin-v1",
+                    digest=sha256_file(descriptor),
+                    origin="official",
+                    entrypoint=f"python:{tool_id}",
+                    capabilities=(capability,),
+                    state="approved",
+                )
+            )
+            record = self.toolbox.install_official(
+                descriptor,
+                manifest,
+                signer=self._official_signer,
+                conformance=lambda path, _: path.is_file(),
+            )
+        if capability not in record.manifest.capabilities:
+            raise PermissionError("callback_capability_not_approved")
+        if provider is not None:
+            receipt = dict(consent_receipt or {})
+            required = {
+                "provider": provider,
+                "tool_id": tool_id,
+                "project_id": self.project_id,
+                "creator_id": self.creator_id,
+            }
+            if any(receipt.get(key) != value for key, value in required.items()):
+                denial = {
+                    "allowed": False,
+                    "reason": "provider_consent_required",
+                    **required,
+                }
+                self.denial_logs.append(denial)
+                raise PermissionError("provider_consent_required")
+            if not receipt.get("data_categories") or not receipt.get("purpose"):
+                raise PermissionError("provider_consent_disclosure_incomplete")
+            self.provider_receipts.append(receipt)
+        decision = {
+            "allowed": True,
+            "reason": "authorized_callback_tool",
+            "tool_id": tool_id,
+            "tool_digest": record.manifest.digest,
+            "toolbox_path": str(record.artifact_path),
+            "capabilities": [capability],
+            "provider": provider,
+        }
+        self.capability_receipts.append(decision)
+        return dispatch()
 
     def write_audit_artifacts(
         self,
