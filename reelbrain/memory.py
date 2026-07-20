@@ -18,6 +18,22 @@ PreferenceStatus = Literal["active", "disabled", "deleted"]
 FeedbackKind = Literal["episode", "remember", "confirm", "override", "delete"]
 
 
+class DeletionFenceRegistry:
+    """Content-free anti-resurrection state shared by memory stores."""
+
+    def __init__(self) -> None:
+        self._fences: set[tuple[str, str]] = set()
+
+    def add(self, creator_id: str, preference_id: str) -> None:
+        self._fences.add((creator_id, preference_id))
+
+    def contains(self, creator_id: str, preference_id: str) -> bool:
+        return (creator_id, preference_id) in self._fences
+
+
+GLOBAL_DELETION_FENCES = DeletionFenceRegistry()
+
+
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -117,10 +133,11 @@ class PreferenceStore:
     values cannot be reconstructed by replay or Sleep.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, deletion_fences: DeletionFenceRegistry | None = None) -> None:
         self._events: list[FeedbackEvent] = []
         self._preferences: dict[str, Preference] = {}
         self._tombstones: dict[str, PreferenceTombstone] = {}
+        self._deletion_fences = deletion_fences or GLOBAL_DELETION_FENCES
 
     @property
     def events(self) -> tuple[FeedbackEvent, ...]:
@@ -274,6 +291,7 @@ class PreferenceStore:
             deletion_receipt_id=f"delete_{uuid4().hex}",
         )
         self._tombstones[preference_id] = tombstone
+        self._deletion_fences.add(current.creator_id, preference_id)
         # Remove content-bearing value rather than preserving a soft-deleted row.
         del self._preferences[preference_id]
         return tombstone
@@ -331,17 +349,33 @@ class PreferenceStore:
             }
             for preference in self.inspect(creator_id, include_disabled=True)
         ]
-        return json.dumps({"version": 1, "preferences": preferences}, sort_keys=True)
+        tombstones = [
+            asdict(tombstone)
+            for tombstone in self._tombstones.values()
+            if tombstone.creator_id == creator_id
+        ]
+        return json.dumps(
+            {"version": 1, "preferences": preferences, "deletion_tombstones": tombstones},
+            sort_keys=True,
+        )
 
     def import_json(self, creator_id: str, payload: str) -> tuple[Preference, ...]:
         document = json.loads(payload)
         if document.get("version") != 1:
             raise ValueError("unsupported_preference_export_version")
+        for raw_tombstone in document.get("deletion_tombstones", []):
+            if raw_tombstone["creator_id"] != creator_id:
+                raise ValueError("cross_creator_preference_import_denied")
+            tombstone = PreferenceTombstone(**raw_tombstone)
+            self._tombstones[tombstone.preference_id] = tombstone
+            self._deletion_fences.add(creator_id, tombstone.preference_id)
         imported: list[Preference] = []
         for raw in document.get("preferences", []):
             if raw["creator_id"] != creator_id:
                 raise ValueError("cross_creator_preference_import_denied")
-            if raw["preference_id"] in self._tombstones:
+            if raw["preference_id"] in self._tombstones or self._deletion_fences.contains(
+                creator_id, raw["preference_id"]
+            ):
                 raise ValueError("deleted_preference_resurrection_denied")
             scope = PreferenceScope(**raw.pop("scope"))
             preference = Preference(scope=scope, **raw)

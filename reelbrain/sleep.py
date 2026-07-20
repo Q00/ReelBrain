@@ -41,8 +41,28 @@ PROTECTED_CONFIGURATION_FAMILIES = frozenset(
 )
 
 
+def _freeze(value: object) -> object:
+    if isinstance(value, Mapping):
+        return MappingProxyType({str(key): _freeze(item) for key, item in value.items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze(item) for item in value)
+    if isinstance(value, (set, frozenset)):
+        return frozenset(_freeze(item) for item in value)
+    return value
+
+
+def _thaw(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {str(key): _thaw(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_thaw(item) for item in value]
+    if isinstance(value, frozenset):
+        return sorted((_thaw(item) for item in value), key=repr)
+    return value
+
+
 def canonical_json(value: object) -> bytes:
-    return json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return json.dumps(_thaw(value), sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
 @dataclass(frozen=True)
@@ -57,8 +77,8 @@ class ConfigurationBundle:
     digest: str = field(init=False)
 
     def __post_init__(self) -> None:
-        configuration = MappingProxyType(dict(self.configuration))
-        compatibility = MappingProxyType(dict(self.compatibility))
+        configuration = _freeze(dict(self.configuration))
+        compatibility = _freeze(dict(self.compatibility))
         object.__setattr__(self, "configuration", configuration)
         object.__setattr__(self, "compatibility", compatibility)
         object.__setattr__(
@@ -70,8 +90,8 @@ class ConfigurationBundle:
                         "bundle_id": self.bundle_id,
                         "version": self.version,
                         "parent_bundle_id": self.parent_bundle_id,
-                        "configuration": dict(configuration),
-                        "compatibility": dict(compatibility),
+                        "configuration": _thaw(configuration),
+                        "compatibility": _thaw(compatibility),
                     }
                 )
             ).hexdigest(),
@@ -102,7 +122,20 @@ class BundleSigner:
     def verify(self, bundle: ConfigurationBundle) -> bool:
         if bundle.signer != self.key_id or bundle.signature is None:
             return False
-        expected = hmac.new(self._secret, bundle.digest.encode(), sha256).hexdigest()
+        current_digest = sha256(
+            canonical_json(
+                {
+                    "bundle_id": bundle.bundle_id,
+                    "version": bundle.version,
+                    "parent_bundle_id": bundle.parent_bundle_id,
+                    "configuration": bundle.configuration,
+                    "compatibility": bundle.compatibility,
+                }
+            )
+        ).hexdigest()
+        if not hmac.compare_digest(current_digest, bundle.digest):
+            return False
+        expected = hmac.new(self._secret, current_digest.encode(), sha256).hexdigest()
         return hmac.compare_digest(expected, bundle.signature)
 
 
@@ -285,8 +318,8 @@ class SleepPromoter:
                     "bundle_id": bundle.bundle_id,
                     "version": bundle.version,
                     "parent_bundle_id": bundle.parent_bundle_id,
-                    "configuration": dict(bundle.configuration),
-                    "compatibility": dict(bundle.compatibility),
+                    "configuration": _thaw(bundle.configuration),
+                    "compatibility": _thaw(bundle.compatibility),
                     "digest": bundle.digest,
                     "signature": bundle.signature,
                     "signer": bundle.signer,

@@ -160,6 +160,22 @@ def test_configuration_is_immutable_after_signing():
 
     with pytest.raises(TypeError):
         bundle.configuration["prompts"] = {"showrunner": "mutated"}
+    with pytest.raises(TypeError):
+        bundle.configuration["prompts"]["showrunner"] = "nested mutation"
+
+
+def test_signature_verification_recomputes_digest_and_rejects_forced_nested_tamper():
+    promoter = make_promoter()
+    bundle = signed_bundle(promoter)
+    object.__setattr__(
+        bundle,
+        "configuration",
+        {"prompts": {"showrunner": "MUTATED AFTER SIGNING"}},
+    )
+
+    assert promoter.signer.verify(bundle) is False
+    with pytest.raises(ValueError, match="sleep_bundle_signature_invalid"):
+        promoter.promote(bundle, passing_promotion_evidence())
 
 
 def test_writes_all_declared_sleep_promotion_artifacts(tmp_path):

@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from reelbrain.memory import PreferenceScope, PreferenceStore
+from reelbrain.memory import DeletionFenceRegistry, PreferenceScope, PreferenceStore
 
 
 SHORT_TECH = PreferenceScope(output_mode="short", content_kind="technical", language="en")
@@ -221,3 +221,44 @@ def test_writes_all_declared_memory_artifacts_and_transfer_report(tmp_path):
     assert report["frozen_baseline"] == "clean-white"
     assert report["personalized_value"] == "yellow-keyword-emphasis"
     assert report["preference_applied"] is True
+
+
+def test_old_pre_delete_backup_cannot_resurrect_in_a_fresh_store():
+    shared_fences = DeletionFenceRegistry()
+    source = PreferenceStore(deletion_fences=shared_fences)
+    source.record_feedback(
+        creator_id="creator-1",
+        project_id="project-1",
+        category="pacing",
+        value="natural",
+        scope=SHORT_TECH,
+        remember=True,
+    )
+    old_backup = source.export_json("creator-1")
+    preference_id = source.inspect("creator-1")[0].preference_id
+    source.delete(preference_id)
+
+    restored_store = PreferenceStore(deletion_fences=shared_fences)
+    with pytest.raises(ValueError, match="deleted_preference_resurrection_denied"):
+        restored_store.import_json("creator-1", old_backup)
+
+
+def test_deletion_tombstones_are_portable_without_content_values():
+    fences = DeletionFenceRegistry()
+    source = PreferenceStore(deletion_fences=fences)
+    source.record_feedback(
+        creator_id="creator-1",
+        project_id="project-1",
+        category="music",
+        value="ambient-low",
+        scope=SHORT_TECH,
+        remember=True,
+    )
+    source.delete(source.inspect("creator-1")[0].preference_id)
+    payload = source.export_json("creator-1")
+
+    document = json.loads(payload)
+
+    assert document["preferences"] == []
+    assert len(document["deletion_tombstones"]) == 1
+    assert "ambient-low" not in payload
