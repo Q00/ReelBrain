@@ -2661,6 +2661,14 @@ def test_runtime_guard_mediates_real_tool_execution_and_writes_declared_audit_ar
     }
     assert all(path.is_file() for path in artifacts.values())
     assert any(receipt["reason"] == "authorized_tool_execution" for receipt in guard.capability_receipts)
+    registered = guard.toolbox.resolve_active("ffprobe")
+    assert ".ReelBrain/toolbox/official/ffprobe/system-v1" in str(registered.artifact_path)
+    tool_receipt = next(
+        receipt
+        for receipt in guard.capability_receipts
+        if receipt["reason"] == "authorized_tool_execution"
+    )
+    assert Path(tool_receipt["toolbox_path"]) == registered.artifact_path
 
 
 def test_runtime_guard_denies_unregistered_os_command_before_execution(tmp_path):
@@ -2675,3 +2683,118 @@ def test_runtime_guard_denies_unregistered_os_command_before_execution(tmp_path)
 
     with pytest.raises(PermissionError, match="tool_not_registered_in_acp"):
         guard.run_tool(["curl", "https://example.com"])
+
+
+def test_official_tool_installs_immutably_and_registry_is_authoritative(tmp_path):
+    from reelbrain.toolbox import ManifestSigner, ToolManifest, ToolboxManager, sha256_file
+
+    artifact = tmp_path / "official-tool"
+    artifact.write_text("official implementation", encoding="utf-8")
+    signer = ManifestSigner(key_id="release-key", key=b"release-signing-key")
+    manifest = signer.sign(
+        ToolManifest(
+            tool_id="media-inspect",
+            version="1.0.0",
+            digest=sha256_file(artifact),
+            origin="official",
+            entrypoint="media-inspect",
+            capabilities=("media:probe",),
+        )
+    )
+    toolbox = ToolboxManager(tmp_path / ".ReelBrain" / "toolbox")
+
+    record = toolbox.install_official(
+        artifact, manifest, signer=signer, conformance=lambda path, _: path.read_text() == "official implementation"
+    )
+    resolved = toolbox.resolve_active("media-inspect")
+
+    assert record.artifact_path == resolved.artifact_path
+    assert record.artifact_path.parts[-5:-1] == (
+        "official",
+        "media-inspect",
+        "1.0.0",
+        manifest.digest,
+    )
+    assert resolved.manifest.state == "approved"
+    with pytest.raises(FileExistsError):
+        toolbox.install_official(
+            artifact, manifest, signer=signer, conformance=lambda *_: True
+        )
+
+
+def test_generated_tool_stays_quarantined_until_auditor_and_human_approve(tmp_path):
+    from reelbrain.toolbox import ToolManifest, ToolboxManager, sha256_file
+
+    artifact = tmp_path / "generated-tool"
+    artifact.write_text("generated implementation", encoding="utf-8")
+    manifest = ToolManifest(
+        tool_id="custom-caption-layout",
+        version="0.1.0",
+        digest=sha256_file(artifact),
+        origin="generated",
+        entrypoint="custom-caption-layout",
+        capabilities=("caption:layout",),
+    )
+    toolbox = ToolboxManager(tmp_path / ".ReelBrain" / "toolbox")
+    staged = toolbox.stage_generated("request-1", artifact, manifest)
+
+    assert staged.manifest.state == "quarantined"
+    with pytest.raises(KeyError, match="active_tool_not_found"):
+        toolbox.resolve_active("custom-caption-layout")
+    with pytest.raises(ValueError, match="human_approval_required"):
+        toolbox.approve_custom(
+            "request-1",
+            human_approver_id="agent:toolsmith",
+            approval_receipt_id="approval-1",
+            auditor_report={"passed": True},
+        )
+    with pytest.raises(ValueError, match="tool_auditor_pass_required"):
+        toolbox.approve_custom(
+            "request-1",
+            human_approver_id="human:creator-1",
+            approval_receipt_id="approval-1",
+            auditor_report={"passed": False},
+        )
+
+    approved = toolbox.approve_custom(
+        "request-1",
+        human_approver_id="human:creator-1",
+        approval_receipt_id="approval-1",
+        auditor_report={"passed": True, "permissions": "bounded"},
+    )
+
+    assert approved.manifest.state == "approved"
+    assert approved.manifest.origin == "custom"
+    assert approved.manifest.approval_receipt_id == "approval-1"
+    assert toolbox.resolve_active("custom-caption-layout").artifact_path == approved.artifact_path
+
+
+def test_toolbox_checks_equivalent_capability_before_new_tool_and_revokes_atomically(tmp_path):
+    from reelbrain.toolbox import ManifestSigner, ToolManifest, ToolboxManager, sha256_file
+
+    artifact = tmp_path / "caption-tool"
+    artifact.write_text("caption implementation", encoding="utf-8")
+    signer = ManifestSigner(key_id="release-key", key=b"release-signing-key")
+    manifest = signer.sign(
+        ToolManifest(
+            tool_id="caption-layout",
+            version="1.0.0",
+            digest=sha256_file(artifact),
+            origin="official",
+            entrypoint="caption-layout",
+            capabilities=("caption:layout", "caption:validate"),
+        )
+    )
+    toolbox = ToolboxManager(tmp_path / ".ReelBrain" / "toolbox")
+    toolbox.install_official(
+        artifact, manifest, signer=signer, conformance=lambda *_: True
+    )
+
+    equivalent = toolbox.find_equivalent(("caption:layout",))
+    toolbox.revoke("caption-layout", reason="dependency vulnerability")
+
+    assert equivalent is not None
+    assert equivalent.manifest.tool_id == "caption-layout"
+    with pytest.raises(KeyError, match="active_tool_not_found"):
+        toolbox.resolve_active("caption-layout")
+    assert (toolbox.disabled / "caption-layout.revoked.json").is_file()

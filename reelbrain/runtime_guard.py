@@ -5,8 +5,10 @@ from __future__ import annotations
 from dataclasses import asdict
 from hashlib import sha256
 import json
+import os
 from pathlib import Path
 import shutil
+import shlex
 import subprocess
 from typing import Iterable
 
@@ -19,6 +21,7 @@ from .governance import (
     ToolExecutionRequest,
     ToolExecutionSession,
 )
+from .toolbox import ManifestSigner, ToolManifest, ToolboxManager, sha256_file
 
 
 def executable_digest(path: Path) -> str:
@@ -41,6 +44,7 @@ class RuntimeGuard:
         creator_id: str,
         agent_id: str = "showrunner",
         tool_names: Iterable[str] = ("ffmpeg", "ffprobe"),
+        toolbox: ToolboxManager | None = None,
     ) -> None:
         self.workspace_root = Path(workspace_root).expanduser().resolve(strict=False)
         self.project_id = project_id
@@ -48,23 +52,58 @@ class RuntimeGuard:
         self.agent_id = agent_id
         self.requester_id = "reelbrain-runtime"
         self.session_id = f"runtime:{project_id}"
+        self.toolbox = toolbox or ToolboxManager()
         tools: list[ACPToolIdentity] = []
         grants: list[ToolCapabilityGrant] = []
         self._tool_by_name: dict[str, ACPToolIdentity] = {}
+        self._executable_by_name: dict[str, Path] = {}
+        official_signer = ManifestSigner(
+            key_id="reelbrain-official-bootstrap-v1",
+            key=b"reelbrain-official-bootstrap-verification-key-v1",
+        )
         for name in tool_names:
             executable = shutil.which(name)
             if executable is None:
                 continue
-            path = Path(executable).resolve()
+            system_path = Path(executable).resolve()
+            try:
+                toolbox_record = self.toolbox.resolve_active(name)
+            except KeyError:
+                bootstrap = self.toolbox.root / ".bootstrap"
+                bootstrap.mkdir(parents=True, exist_ok=True)
+                wrapper = bootstrap / name
+                wrapper.write_text(
+                    f"#!/bin/sh\nexec {shlex.quote(str(system_path))} \"$@\"\n",
+                    encoding="utf-8",
+                )
+                wrapper.chmod(0o755)
+                unsigned = ToolManifest(
+                    tool_id=name,
+                    version="system-v1",
+                    digest=sha256_file(wrapper),
+                    origin="official",
+                    entrypoint=str(system_path),
+                    capabilities=("local:execute",),
+                    state="approved",
+                )
+                manifest = official_signer.sign(unsigned)
+                toolbox_record = self.toolbox.install_official(
+                    wrapper,
+                    manifest,
+                    signer=official_signer,
+                    conformance=lambda path, _: path.is_file() and os.access(path, os.X_OK),
+                )
+            path = toolbox_record.artifact_path
             tool = ACPToolIdentity(
                 tool_id=name,
-                digest=executable_digest(path),
+                digest=toolbox_record.manifest.digest,
                 toolbox_path=path,
                 lifecycle="approved",
                 origin="official",
             )
             tools.append(tool)
             self._tool_by_name[name] = tool
+            self._executable_by_name[name] = path
             grants.append(
                 ToolCapabilityGrant(
                     capability="local:execute",
@@ -137,7 +176,10 @@ class RuntimeGuard:
             self.denial_logs.append(payload)
         decision.require_allowed()
         try:
-            return subprocess.run(command, check=True, capture_output=True, text=True)
+            governed_command = [str(self._executable_by_name[name]), *command[1:]]
+            return subprocess.run(
+                governed_command, check=True, capture_output=True, text=True
+            )
         except subprocess.CalledProcessError as exc:
             raise RuntimeError(f"governed_tool_failed:{exc.stderr.strip()}") from exc
 
