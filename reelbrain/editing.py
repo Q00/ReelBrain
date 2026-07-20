@@ -5,8 +5,10 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from hashlib import sha256
 import json
+import math
 from pathlib import Path
 import shutil
+import textwrap
 import subprocess
 import tempfile
 from typing import Iterable, Literal
@@ -137,6 +139,29 @@ class CaptionCue:
 
 
 @dataclass(frozen=True)
+class CaptionValidation:
+    reference_kind: str
+    reference_confidence: float
+    highlight_word_error_rate: float
+    caption_word_error_rate: float
+    meaning_changing_caption_errors: int
+    timing_usable: bool
+    layout_passed: bool
+
+    @property
+    def passed(self) -> bool:
+        return (
+            self.reference_kind != "self_attested"
+            and self.reference_confidence >= 0.8
+            and self.highlight_word_error_rate <= 0.05
+            and self.caption_word_error_rate <= 0.05
+            and self.meaning_changing_caption_errors == 0
+            and self.timing_usable
+            and self.layout_passed
+        )
+
+
+@dataclass(frozen=True)
 class RightsEntry:
     asset_id: str
     source: str
@@ -226,6 +251,98 @@ def word_error_rate(reference: str, hypothesis: str) -> float:
             )
         previous = current
     return previous[-1] / len(reference_words)
+
+
+def word_edit_distance(reference: str, hypothesis: str) -> int:
+    reference_words = reference.lower().split()
+    hypothesis_words = hypothesis.lower().split()
+    previous = list(range(len(hypothesis_words) + 1))
+    for row, ref_word in enumerate(reference_words, start=1):
+        current = [row]
+        for column, hyp_word in enumerate(hypothesis_words, start=1):
+            current.append(
+                min(
+                    current[-1] + 1,
+                    previous[column] + 1,
+                    previous[column - 1] + (ref_word != hyp_word),
+                )
+            )
+        previous = current
+    return previous[-1]
+
+
+def caption_cues(
+    text: str,
+    duration: float,
+    *,
+    max_chars_per_line: int = 32,
+    max_cue_seconds: float = 6.0,
+) -> tuple[CaptionCue, ...]:
+    """Create readable, proportionally timed cues with at most two lines."""
+
+    words = text.split()
+    if not words or duration <= 0:
+        raise ValueError("caption_text_and_duration_required")
+    minimum_cues = max(1, math.ceil(duration / max_cue_seconds))
+    target_words = max(1, math.ceil(len(words) / minimum_cues))
+    groups: list[list[str]] = []
+    current: list[str] = []
+    for word in words:
+        candidate = [*current, word]
+        wrapped = textwrap.wrap(" ".join(candidate), width=max_chars_per_line)
+        if current and (len(candidate) > target_words or len(wrapped) > 2):
+            groups.append(current)
+            current = [word]
+        else:
+            current = candidate
+    if current:
+        groups.append(current)
+
+    total_words = sum(len(group) for group in groups)
+    cues: list[CaptionCue] = []
+    elapsed = 0.0
+    for index, group in enumerate(groups):
+        cue_duration = duration * len(group) / total_words
+        end = duration if index == len(groups) - 1 else elapsed + cue_duration
+        lines = textwrap.wrap(" ".join(group), width=max_chars_per_line)
+        cues.append(CaptionCue(elapsed, end, "\n".join(lines)))
+        elapsed = end
+    return tuple(cues)
+
+
+def validate_captions(
+    *,
+    source_reference: str,
+    highlight_text: str,
+    cues: Iterable[CaptionCue],
+    reference_kind: str,
+    reference_confidence: float,
+) -> CaptionValidation:
+    cue_list = tuple(cues)
+    caption_text = " ".join(cue.text.replace("\n", " ") for cue in cue_list)
+    timing_usable = bool(cue_list) and all(
+        cue.start >= 0
+        and cue.end > cue.start
+        and cue.end - cue.start <= 6.01
+        and (index == 0 or cue.start >= cue_list[index - 1].end - 0.001)
+        for index, cue in enumerate(cue_list)
+    )
+    layout_passed = all(
+        len(cue.text.splitlines()) <= 2
+        and all(len(line) <= 32 for line in cue.text.splitlines())
+        for cue in cue_list
+    )
+    return CaptionValidation(
+        reference_kind=reference_kind,
+        reference_confidence=reference_confidence,
+        highlight_word_error_rate=word_error_rate(source_reference, highlight_text),
+        caption_word_error_rate=word_error_rate(source_reference, caption_text),
+        # Conservatively treat every transcript/caption word edit as meaning-bearing
+        # until a creator-corrected or gold reference proves otherwise.
+        meaning_changing_caption_errors=word_edit_distance(source_reference, caption_text),
+        timing_usable=timing_usable,
+        layout_passed=layout_passed,
+    )
 
 
 class LocalPackageBuilder:
@@ -366,6 +483,9 @@ class LocalPackageBuilder:
         rights: Iterable[RightsEntry],
         approved_thumbnail: bool = False,
         creator_approval_receipt: str | None = None,
+        caption_reference: str | None = None,
+        caption_reference_kind: str = "self_attested",
+        caption_reference_confidence: float = 0.0,
     ) -> PackagePaths:
         source_path, root = self._begin_guard(
             source=source,
@@ -398,10 +518,17 @@ class LocalPackageBuilder:
         videos.append(final)
 
         selected = candidates[0]
-        cue = CaptionCue(0, selected.duration, selected.text)
+        cues = caption_cues(selected.text, selected.duration)
+        caption_validation = validate_captions(
+            source_reference=caption_reference or selected.text,
+            highlight_text=selected.text,
+            cues=cues,
+            reference_kind=caption_reference_kind,
+            reference_confidence=caption_reference_confidence,
+        )
         srt = root / "captions.srt"
         vtt = root / "captions.vtt"
-        write_captions((cue,), srt, vtt, guard)
+        write_captions(cues, srt, vtt, guard)
         otio = root / "timeline.otio"
         self._write_json(otio, self._otio_document(candidates, kind="short"))
         traceability = root / "source_traceability.json"
@@ -439,7 +566,11 @@ class LocalPackageBuilder:
         self._write_json(
             audit,
             {
-                "status": "PUBLISH_READY" if creator_approval_receipt else "CREATOR_REVIEW",
+                "status": (
+                    "PUBLISH_READY"
+                    if creator_approval_receipt and caption_validation.passed
+                    else "CREATOR_REVIEW"
+                ),
                 "output_mode": "short",
                 "candidate_count": 3,
                 "diverse_takeaways": len({segment.takeaway for segment in candidates}) == 3,
@@ -447,6 +578,7 @@ class LocalPackageBuilder:
                 "self_contained": all(segment.self_contained for segment in candidates),
                 "source_digest": file_digest(info.path, guard),
                 "creator_approval_receipt": creator_approval_receipt,
+                "caption_validation": asdict(caption_validation),
             },
         )
         extras = {"educational_value_cards": value_cards, "final_video": final}
@@ -526,6 +658,16 @@ class LocalPackageBuilder:
         selected, assessments = HighlightAgentTeam(preferred_terms=preferred_terms).select(
             candidates, count=3
         )
+        selected_reference_chunks = tuple(
+            chunk
+            for chunk in chunks
+            if chunk.start < selected[0].end and chunk.end > selected[0].start
+        )
+        source_reference = " ".join(
+            chunk.text.strip() for chunk in selected_reference_chunks
+        ).strip()
+        if not source_reference:
+            raise MediaError("selected_highlight_source_reference_missing")
         package = self.build_short_package(
             source=info.path,
             segments=selected,
@@ -535,6 +677,13 @@ class LocalPackageBuilder:
             rights=rights_entries,
             approved_thumbnail=approved_thumbnail,
             creator_approval_receipt=creator_approval_receipt,
+            caption_reference=source_reference,
+            caption_reference_kind=getattr(
+                stt_provider, "reference_kind", "source_stt_alignment"
+            ),
+            caption_reference_confidence=min(
+                chunk.confidence for chunk in selected_reference_chunks
+            ),
         )
         self._require_guard().capability_receipts[0:0] = stt_capability_receipts
         self._require_guard().provider_receipts[0:0] = stt_provider_receipts
@@ -548,15 +697,18 @@ class LocalPackageBuilder:
         assessments_artifact = package.root / "agent_assessments.json"
         self._write_json(assessments_artifact, [asdict(item) for item in assessments])
         audit_document = json.loads(package.audit_report.read_text(encoding="utf-8"))
+        caption_validation = audit_document["caption_validation"]
         audit_document.update(
             {
                 "stt_provider": stt_provider.name,
                 "highlight_discovery": "agent_fan_out",
-                "source_faithful": all(
-                    word_error_rate(segment.text, segment.text) <= 0.05
-                    for segment in selected
+                "source_faithful": (
+                    caption_validation["highlight_word_error_rate"] <= 0.05
+                    and caption_validation["caption_word_error_rate"] <= 0.05
                 ),
-                "meaning_changing_caption_errors": 0,
+                "meaning_changing_caption_errors": caption_validation[
+                    "meaning_changing_caption_errors"
+                ],
             }
         )
         self._write_json(package.audit_report, audit_document)

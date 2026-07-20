@@ -7,7 +7,9 @@ from reelbrain.editing import (
     MediaError,
     RightsEntry,
     TranscriptSegment,
+    caption_cues,
     probe_media,
+    validate_captions,
     word_error_rate,
 )
 from tests.media_fixtures import synthetic_video
@@ -132,6 +134,40 @@ def test_caption_accuracy_gate_uses_real_wer_threshold():
     assert word_error_rate(reference, degraded) > 0.05
 
 
+def test_caption_validation_uses_independent_reference_and_readable_timing():
+    reference = "memory is a behavioral prior not evidence and it changes agent behavior"
+    cues = caption_cues(reference, 35)
+    validation = validate_captions(
+        source_reference=reference,
+        highlight_text=reference,
+        cues=cues,
+        reference_kind="gold_fixture",
+        reference_confidence=1.0,
+    )
+
+    assert validation.passed is True
+    assert validation.caption_word_error_rate == 0
+    assert validation.meaning_changing_caption_errors == 0
+    assert all(cue.end - cue.start <= 6.01 for cue in cues)
+    assert all(len(cue.text.splitlines()) <= 2 for cue in cues)
+
+
+def test_caption_validation_rejects_self_attestation_and_word_changes():
+    reference = "memory is not evidence"
+    changed = "memory is evidence"
+    cues = caption_cues(changed, 5)
+    validation = validate_captions(
+        source_reference=reference,
+        highlight_text=changed,
+        cues=cues,
+        reference_kind="self_attested",
+        reference_confidence=1.0,
+    )
+
+    assert validation.passed is False
+    assert validation.meaning_changing_caption_errors > 0
+
+
 def test_rights_are_non_waivable_for_short_export(source_video, tmp_path):
     denied = RightsEntry(
         asset_id="source-video",
@@ -159,6 +195,7 @@ def test_creator_can_supply_only_video_and_runtime_discovers_publish_ready_highl
         name = "fixture-stt"
         official = True
         provider = None
+        reference_kind = "gold_fixture"
 
         def transcribe(self, video_path):
             assert video_path == source_video.resolve()
@@ -199,6 +236,9 @@ def test_creator_can_supply_only_video_and_runtime_discovers_publish_ready_highl
     assert audit["highlight_discovery"] == "agent_fan_out"
     assert audit["source_faithful"] is True
     assert audit["meaning_changing_caption_errors"] == 0
+    assert audit["caption_validation"]["caption_word_error_rate"] == 0
+    assert audit["caption_validation"]["timing_usable"] is True
+    assert audit["caption_validation"]["layout_passed"] is True
     assert package.extras["source_transcript"].is_file()
     assert package.extras["agent_assessments"].is_file()
 

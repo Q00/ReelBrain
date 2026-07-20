@@ -47,7 +47,7 @@ def test_two_confirmed_examples_transfer_to_next_relevant_edit():
 
     assert result.value == "yellow-keyword-emphasis"
     assert result.preference_id == preference.preference_id
-    assert result.source == "explicit_preference"
+    assert result.source == "confirmed_inferred_preference"
 
 
 def test_irrelevant_context_abstains_instead_of_misapplying_memory():
@@ -109,6 +109,34 @@ def test_precedence_is_steering_then_override_then_specific_preference():
     assert steered.source == "current_steering"
 
 
+def test_broader_explicit_preference_outranks_specific_confirmed_inference():
+    store = PreferenceStore()
+    store.record_feedback(
+        creator_id="creator-1",
+        project_id="explicit",
+        category="pacing",
+        value="natural-explicit",
+        scope=PreferenceScope(output_mode="short"),
+        remember=True,
+    )
+    for index in range(2):
+        store.record_feedback(
+            creator_id="creator-1",
+            project_id=f"inferred-{index}",
+            category="pacing",
+            value="tight-inferred",
+            scope=SHORT_TECH,
+        )
+    store.confirm(store.propose(creator_id="creator-1", category="pacing", scope=SHORT_TECH))
+
+    result = store.resolve(
+        creator_id="creator-1", category="pacing", context=SHORT_TECH
+    )
+
+    assert result.value == "natural-explicit"
+    assert result.source == "explicit_preference"
+
+
 def test_creator_can_inspect_edit_disable_and_reenable_memory():
     store = PreferenceStore()
     event = store.record_feedback(
@@ -153,9 +181,28 @@ def test_delete_removes_content_and_tombstone_prevents_resurrection():
 
     assert store.inspect("creator-1") == ()
     assert tombstone.preference_id == preference.preference_id
+    assert set(tombstone.provenance_event_ids) == set(preference.provenance_event_ids)
     assert "ambient-low" not in json.dumps([t.__dict__ for t in store.tombstones])
+    assert "ambient-low" not in json.dumps([event.__dict__ for event in store.events], default=str)
     with pytest.raises(ValueError, match="deleted_preference_resurrection_denied"):
         store.import_json("creator-1", exported)
+
+
+def test_deleted_preference_cannot_be_reproposed_from_retained_feedback():
+    store = PreferenceStore()
+    record_examples(store, 2)
+    preference = store.confirm(
+        store.propose(creator_id="creator-1", category="caption_style", scope=SHORT_TECH)
+    )
+
+    store.delete(preference.preference_id)
+
+    assert store.propose(
+        creator_id="creator-1", category="caption_style", scope=SHORT_TECH
+    ) is None
+    assert store.resolve(
+        creator_id="creator-1", category="caption_style", context=SHORT_TECH
+    ).source == "abstain"
 
 
 def test_preferences_are_portable_but_never_cross_creator():

@@ -114,6 +114,7 @@ class PreferenceTombstone:
     creator_id: str
     deleted_at: str
     deletion_receipt_id: str
+    provenance_event_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -168,7 +169,7 @@ class PreferenceStore:
         )
         self._events.append(event)
         if remember:
-            self._activate_from_events((event,), confidence=1.0)
+            self._activate_from_events((event,), confidence=1.0, explicit=True)
         return event
 
     def propose(
@@ -186,6 +187,7 @@ class PreferenceStore:
             and event.category == category
             and event.scope == scope
             and event.kind == "episode"
+            and not self._deletion_fences.contains(creator_id, event.event_id)
         ]
         if len(matching) < minimum_examples:
             return None
@@ -222,11 +224,15 @@ class PreferenceStore:
         )
         self._events.append(confirmation)
         return self._activate_from_events(
-            (*evidence, confirmation), confidence=proposal.confidence
+            (*evidence, confirmation), confidence=proposal.confidence, explicit=False
         )
 
     def _activate_from_events(
-        self, events: Iterable[FeedbackEvent], *, confidence: float
+        self,
+        events: Iterable[FeedbackEvent],
+        *,
+        confidence: float,
+        explicit: bool,
     ) -> Preference:
         event_list = tuple(events)
         if not event_list:
@@ -240,6 +246,7 @@ class PreferenceStore:
             scope=first.scope,
             confidence=confidence,
             provenance_event_ids=tuple(event.event_id for event in event_list),
+            explicit=explicit,
         )
         self._preferences[preference.preference_id] = preference
         return preference
@@ -289,9 +296,17 @@ class PreferenceStore:
             creator_id=current.creator_id,
             deleted_at=utc_now(),
             deletion_receipt_id=f"delete_{uuid4().hex}",
+            provenance_event_ids=current.provenance_event_ids,
         )
         self._tombstones[preference_id] = tombstone
         self._deletion_fences.add(current.creator_id, preference_id)
+        for event_id in current.provenance_event_ids:
+            self._deletion_fences.add(current.creator_id, event_id)
+        self._events = [
+            event
+            for event in self._events
+            if event.event_id not in current.provenance_event_ids
+        ]
         # Remove content-bearing value rather than preserving a soft-deleted row.
         del self._preferences[preference_id]
         return tombstone
@@ -322,8 +337,8 @@ class PreferenceStore:
             selected = max(
                 candidates,
                 key=lambda preference: (
-                    preference.scope.specificity,
                     preference.explicit,
+                    preference.scope.specificity,
                     preference.version,
                     preference.updated_at,
                 ),
@@ -369,6 +384,8 @@ class PreferenceStore:
             tombstone = PreferenceTombstone(**raw_tombstone)
             self._tombstones[tombstone.preference_id] = tombstone
             self._deletion_fences.add(creator_id, tombstone.preference_id)
+            for event_id in tombstone.provenance_event_ids:
+                self._deletion_fences.add(creator_id, event_id)
         imported: list[Preference] = []
         for raw in document.get("preferences", []):
             if raw["creator_id"] != creator_id:
