@@ -284,7 +284,7 @@ def caption_cues(
     if not words or duration <= 0:
         raise ValueError("caption_text_and_duration_required")
     minimum_cues = max(1, math.ceil(duration / max_cue_seconds))
-    target_words = max(1, math.ceil(len(words) / minimum_cues))
+    target_words = max(1, len(words) // minimum_cues)
     groups: list[list[str]] = []
     current: list[str] = []
     for word in words:
@@ -358,12 +358,16 @@ class LocalPackageBuilder:
         output_dir: Path | str,
         project_id: str,
         creator_id: str,
+        additional_read_roots: Iterable[Path | str] = (),
     ) -> tuple[Path, Path]:
         source_path = Path(source).expanduser().resolve()
         root = Path(output_dir).expanduser().resolve()
         self.guard = RuntimeGuard(
             workspace_root=root,
-            local_allowlist=(source_path.parent,),
+            local_allowlist=(
+                source_path.parent,
+                *(Path(path).expanduser().resolve() for path in additional_read_roots),
+            ),
             project_id=project_id,
             creator_id=creator_id,
             tool_names=("ffmpeg", "ffprobe"),
@@ -638,8 +642,18 @@ class LocalPackageBuilder:
             output_dir=output_dir,
             project_id=project_id,
             creator_id=creator_id,
+            additional_read_roots=(
+                Path(path).expanduser().resolve().parent
+                for path in getattr(stt_provider, "input_paths", ())
+            ),
         )
         info = self._validate_source(source_path, minimum_minutes=5)
+        for provider_input in getattr(stt_provider, "input_paths", ()):
+            self._require_guard().authorize_path(
+                provider_input,
+                operation="read",
+                data_class="transcript_reference",
+            )
         chunks = tuple(
             self._require_guard().run_callback_tool(
                 tool_id=stt_provider.name,

@@ -43,6 +43,8 @@ uv run reelbrain short ./source.mp4 \
 
 The source must be a 5–60 minute MP4, MOV, or WebM with decodable video and audio. The command fails closed when Whisper is unavailable, rights are not approved, the source is unsupported, or three source-faithful candidates cannot be found.
 
+If a creator already has an SRT or VTT transcript, pass `--transcript ./source.srt`. ReelBrain validates and uses it locally as the caption/highlight reference, so Whisper is not required and no provider call occurs.
+
 ## Long-form dogfood
 
 Long-form accepts a creator-confirmed argument-map JSON array using the `TranscriptSegment` fields and a corrected transcript file.

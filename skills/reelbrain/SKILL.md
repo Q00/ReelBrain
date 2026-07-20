@@ -36,7 +36,8 @@ uv run reelbrain short <source> \
   --project-id <project-id> \
   --creator-id <creator-id> \
   --approval-receipt <receipt> \
-  --rights-license <license>
+  --rights-license <license> \
+  --transcript <optional-source.srt-or-vtt>
 ```
 
 Expect three diverse 30–60 second 1080×1920 H.264/AAC candidates, a selected final, SRT/VTT captions, OTIO, manifests, source traceability, value cards, agent assessments, and validation/governance evidence.

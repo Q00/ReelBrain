@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from pathlib import Path
+import re
 import shutil
 import tempfile
 from typing import Protocol
@@ -26,6 +27,80 @@ class STTProvider(Protocol):
     name: str
 
     def transcribe(self, video_path: Path) -> tuple[TranscriptChunk, ...]: ...
+
+
+_SRT_TIME = re.compile(
+    r"(?P<start>\d{2}:\d{2}:\d{2}[,.]\d{3})\s+-->\s+"
+    r"(?P<end>\d{2}:\d{2}:\d{2}[,.]\d{3})"
+)
+_VTT_TIME = re.compile(
+    r"(?P<start>(?:\d{2}:)?\d{2}:\d{2}\.\d{3})\s+-->\s+"
+    r"(?P<end>(?:\d{2}:)?\d{2}:\d{2}\.\d{3})"
+)
+
+
+def _subtitle_seconds(value: str) -> float:
+    parts = value.replace(",", ".").split(":")
+    if len(parts) == 2:
+        hours = 0
+        minutes, seconds = parts
+    elif len(parts) == 3:
+        hours, minutes, seconds = parts
+    else:
+        raise ValueError("invalid_subtitle_timestamp")
+    return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+
+
+class SubtitleFileSTT:
+    """Use a creator-supplied SRT/VTT as a local transcription reference."""
+
+    name = "subtitle-file-stt"
+    official = True
+    provider = None
+    reference_kind = "creator_supplied_transcript"
+
+    def __init__(self, transcript_path: Path | str) -> None:
+        self.transcript_path = Path(transcript_path).expanduser().resolve()
+        self.input_paths = (self.transcript_path,)
+
+    def transcribe(self, video_path: Path) -> tuple[TranscriptChunk, ...]:
+        if self.transcript_path.suffix.lower() not in {".srt", ".vtt"}:
+            raise MediaError("unsupported_transcript_format")
+        if not self.transcript_path.is_file():
+            raise MediaError("transcript_file_missing")
+        text = self.transcript_path.read_text(encoding="utf-8-sig")
+        matcher = _VTT_TIME if self.transcript_path.suffix.lower() == ".vtt" else _SRT_TIME
+        lines = text.splitlines()
+        chunks: list[TranscriptChunk] = []
+        index = 0
+        while index < len(lines):
+            match = matcher.search(lines[index])
+            if match is None:
+                index += 1
+                continue
+            start = _subtitle_seconds(match.group("start"))
+            end = _subtitle_seconds(match.group("end"))
+            index += 1
+            cue_lines: list[str] = []
+            while index < len(lines) and lines[index].strip():
+                cue_lines.append(lines[index].strip())
+                index += 1
+            cue_text = " ".join(cue_lines).strip()
+            if end <= start or not cue_text:
+                raise MediaError("invalid_subtitle_cue")
+            chunks.append(
+                TranscriptChunk(
+                    chunk_id=f"subtitle-{len(chunks) + 1}",
+                    start=start,
+                    end=end,
+                    text=cue_text,
+                    confidence=1.0,
+                )
+            )
+            index += 1
+        if not chunks:
+            raise MediaError("transcript_contains_no_cues")
+        return tuple(chunks)
 
 
 class LocalWhisperSTT:

@@ -13,7 +13,7 @@ from reelbrain.editing import (
     word_error_rate,
 )
 from tests.media_fixtures import synthetic_video
-from reelbrain.transcription import TranscriptChunk
+from reelbrain.transcription import SubtitleFileSTT, TranscriptChunk
 
 
 def segment(index, start, *, takeaway=None, self_contained=True, complete=True):
@@ -260,3 +260,41 @@ def test_normal_short_whisper_chunks_are_combined_into_30_to_60_second_windows()
     assert len(segments) == 3
     assert all(30 <= segment.duration <= 60 for segment in segments)
     assert all(segment.complete_thought for segment in segments)
+
+
+def test_creator_supplied_srt_can_replace_missing_whisper_for_short_ingest(
+    source_video, tmp_path
+):
+    transcript_dir = tmp_path / "creator-transcript"
+    transcript_dir.mkdir()
+    transcript = transcript_dir / "source.srt"
+    transcript.write_text(
+        """1
+00:00:10,000 --> 00:00:45,000
+Memory is a behavioral prior, not evidence.
+
+2
+00:01:00,000 --> 00:01:35,000
+ACP translates tool capabilities while the broker enforces every effect.
+
+3
+00:01:50,000 --> 00:02:25,000
+Sleep promotes only bounded configurations after hidden evaluation and rollback.
+""",
+        encoding="utf-8",
+    )
+
+    package = LocalPackageBuilder(output_fps=2).build_short_from_video(
+        source=source_video,
+        stt_provider=SubtitleFileSTT(transcript),
+        output_dir=tmp_path / "subtitle-package",
+        project_id="project-subtitle",
+        creator_id="creator-1",
+        rights=rights(),
+        creator_approval_receipt="creator-approved-subtitle-short",
+    )
+
+    audit = json.loads(package.audit_report.read_text())
+    assert audit["status"] == "PUBLISH_READY"
+    assert audit["stt_provider"] == "subtitle-file-stt"
+    assert audit["caption_validation"]["reference_kind"] == "creator_supplied_transcript"

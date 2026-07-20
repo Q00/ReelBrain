@@ -14,7 +14,7 @@ from .evidence import ReleaseEvidenceStore
 from .editing import LocalPackageBuilder, RightsEntry, TranscriptSegment
 from .release import CohortFeedback, FounderDogfoodRun, SemanticFixtureResult
 from .setup import SetupManager
-from .transcription import LocalWhisperSTT
+from .transcription import LocalWhisperSTT, SubtitleFileSTT
 
 
 def default_evidence_dir() -> Path:
@@ -84,9 +84,14 @@ def creator_rights(source: Path, *, license_id: str, modes: tuple[str, ...]) -> 
 
 def build_short(args) -> int:
     source = args.source.expanduser().resolve()
+    stt_provider = (
+        SubtitleFileSTT(args.transcript)
+        if args.transcript is not None
+        else LocalWhisperSTT(model=args.whisper_model, language=args.language)
+    )
     package = LocalPackageBuilder().build_short_from_video(
         source=source,
-        stt_provider=LocalWhisperSTT(model=args.whisper_model, language=args.language),
+        stt_provider=stt_provider,
         output_dir=args.output,
         project_id=args.project_id,
         creator_id=args.creator_id,
@@ -231,6 +236,11 @@ def build_parser() -> argparse.ArgumentParser:
     short.add_argument("--rights-license", required=True)
     short.add_argument("--whisper-model", default="base")
     short.add_argument("--language")
+    short.add_argument(
+        "--transcript",
+        type=Path,
+        help="Optional creator-supplied SRT/VTT; bypasses local Whisper without cloud fallback.",
+    )
     short.add_argument("--preferred-term", action="append", default=[])
     short.add_argument("--thumbnail", action=argparse.BooleanOptionalAction, default=False)
     short.set_defaults(func=build_short)
