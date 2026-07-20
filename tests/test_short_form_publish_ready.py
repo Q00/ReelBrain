@@ -199,3 +199,22 @@ def test_creator_can_supply_only_video_and_runtime_discovers_publish_ready_highl
     assert audit["meaning_changing_caption_errors"] == 0
     assert package.extras["source_transcript"].is_file()
     assert package.extras["agent_assessments"].is_file()
+
+
+def test_normal_short_whisper_chunks_are_combined_into_30_to_60_second_windows():
+    chunks = tuple(
+        TranscriptChunk(
+            f"chunk-{index}",
+            index * 5,
+            (index + 1) * 5,
+            f"Part {index} of one educational explanation{' .' if index % 7 == 6 else ''}",
+            0.95,
+        )
+        for index in range(21)
+    )
+
+    segments = LocalPackageBuilder.segments_from_transcript_chunks(chunks)
+
+    assert len(segments) == 3
+    assert all(30 <= segment.duration <= 60 for segment in segments)
+    assert all(segment.complete_thought for segment in segments)

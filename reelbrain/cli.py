@@ -10,7 +10,9 @@ import shutil
 import sys
 
 from .evidence import ReleaseEvidenceStore
+from .editing import LocalPackageBuilder, RightsEntry, TranscriptSegment
 from .release import CohortFeedback, FounderDogfoodRun, SemanticFixtureResult
+from .transcription import LocalWhisperSTT
 
 
 def default_evidence_dir() -> Path:
@@ -37,6 +39,63 @@ def doctor() -> int:
 
 def evidence_store(args) -> ReleaseEvidenceStore:
     return ReleaseEvidenceStore(args.evidence_dir)
+
+
+def creator_rights(source: Path, *, license_id: str, modes: tuple[str, ...]) -> tuple[RightsEntry, ...]:
+    return (
+        RightsEntry(
+            asset_id=f"source:{source.name}",
+            source="creator-supplied",
+            status="approved",
+            license_id=license_id,
+            permitted_uses=modes,
+        ),
+    )
+
+
+def build_short(args) -> int:
+    source = args.source.expanduser().resolve()
+    package = LocalPackageBuilder().build_short_from_video(
+        source=source,
+        stt_provider=LocalWhisperSTT(model=args.whisper_model, language=args.language),
+        output_dir=args.output,
+        project_id=args.project_id,
+        creator_id=args.creator_id,
+        rights=creator_rights(
+            source, license_id=args.rights_license, modes=("short_form_export",)
+        ),
+        creator_approval_receipt=args.approval_receipt,
+        preferred_terms=args.preferred_term,
+        approved_thumbnail=args.thumbnail,
+    )
+    print(json.dumps({"status": "PUBLISH_READY", "package": str(package.root), "videos": [str(path) for path in package.videos]}, indent=2))
+    return 0
+
+
+def build_long(args) -> int:
+    source = args.source.expanduser().resolve()
+    argument_rows = json.loads(args.argument_map.read_text(encoding="utf-8"))
+    segments = tuple(TranscriptSegment(**row) for row in argument_rows)
+    cost_receipt = (
+        json.loads(args.cost_receipt.read_text(encoding="utf-8"))
+        if args.cost_receipt
+        else {"currency": "USD", "reserved": 0, "actual": 0, "mode": "local"}
+    )
+    package = LocalPackageBuilder().build_long_package(
+        source=source,
+        argument_map=segments,
+        output_dir=args.output,
+        project_id=args.project_id,
+        creator_id=args.creator_id,
+        rights=creator_rights(
+            source, license_id=args.rights_license, modes=("long_form_export",)
+        ),
+        corrected_transcript=args.corrected_transcript.read_text(encoding="utf-8"),
+        creator_approval_receipt=args.approval_receipt,
+        cost_receipt=cost_receipt,
+    )
+    print(json.dumps({"status": "PUBLISH_READY", "package": str(package.root), "video": str(package.videos[0])}, indent=2))
+    return 0
 
 
 def release_evaluate(args) -> int:
@@ -104,6 +163,31 @@ def build_parser() -> argparse.ArgumentParser:
     doctor_parser = commands.add_parser("doctor")
     doctor_parser.set_defaults(func=lambda args: doctor())
 
+    short = commands.add_parser("short")
+    short.add_argument("source", type=Path)
+    short.add_argument("--output", type=Path, required=True)
+    short.add_argument("--project-id", required=True)
+    short.add_argument("--creator-id", required=True)
+    short.add_argument("--approval-receipt", required=True)
+    short.add_argument("--rights-license", required=True)
+    short.add_argument("--whisper-model", default="base")
+    short.add_argument("--language")
+    short.add_argument("--preferred-term", action="append", default=[])
+    short.add_argument("--thumbnail", action=argparse.BooleanOptionalAction, default=False)
+    short.set_defaults(func=build_short)
+
+    long = commands.add_parser("long")
+    long.add_argument("source", type=Path)
+    long.add_argument("--output", type=Path, required=True)
+    long.add_argument("--project-id", required=True)
+    long.add_argument("--creator-id", required=True)
+    long.add_argument("--approval-receipt", required=True)
+    long.add_argument("--rights-license", required=True)
+    long.add_argument("--argument-map", type=Path, required=True)
+    long.add_argument("--corrected-transcript", type=Path, required=True)
+    long.add_argument("--cost-receipt", type=Path)
+    long.set_defaults(func=build_long)
+
     release = commands.add_parser("release")
     release_commands = release.add_subparsers(dest="release_command", required=True)
 
@@ -156,4 +240,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

@@ -314,6 +314,47 @@ class LocalPackageBuilder:
             raise MediaError("insufficient_diverse_short_candidates")
         return tuple(selected)
 
+    @staticmethod
+    def segments_from_transcript_chunks(chunks: Iterable[object]) -> tuple[TranscriptSegment, ...]:
+        """Combine normal short STT chunks into complete 30-60 second windows."""
+
+        ordered = tuple(sorted(chunks, key=lambda chunk: chunk.start))
+        windows: list[TranscriptSegment] = []
+        current: list[object] = []
+        for chunk in ordered:
+            if current and chunk.start - current[-1].end > 2:
+                current = []
+            current.append(chunk)
+            duration = current[-1].end - current[0].start
+            if duration < 30:
+                continue
+            if duration > 60:
+                current = [chunk]
+                continue
+            text = " ".join(item.text.strip() for item in current).strip()
+            if not text.endswith((".", "!", "?")) and duration < 55:
+                continue
+            window_id = f"window-{current[0].chunk_id}-{current[-1].chunk_id}"
+            confidence = sum(item.confidence for item in current) / len(current)
+            windows.append(
+                TranscriptSegment(
+                    segment_id=window_id,
+                    start=current[0].start,
+                    end=current[-1].end,
+                    text=text,
+                    thesis=text.split(".", 1)[0].strip(),
+                    takeaway=text,
+                    hook=" ".join(text.split()[:8]),
+                    payoff="Complete educational explanation",
+                    confidence=confidence,
+                    educational_value=confidence,
+                    self_contained=text.endswith((".", "!", "?")),
+                    complete_thought=text.endswith((".", "!", "?")),
+                )
+            )
+            current = []
+        return tuple(windows)
+
     def build_short_package(
         self,
         *,
@@ -467,24 +508,7 @@ class LocalPackageBuilder:
         chunks = tuple(stt_provider.transcribe(info.path))
         if not chunks:
             raise MediaError("stt_returned_no_transcript")
-        candidates = tuple(
-            TranscriptSegment(
-                segment_id=chunk.chunk_id,
-                start=chunk.start,
-                end=chunk.end,
-                text=chunk.text,
-                thesis=chunk.text.split(".", 1)[0].strip(),
-                takeaway=chunk.text.strip(),
-                hook=chunk.text.split(" ", 8)[0:8] and " ".join(chunk.text.split()[:8]),
-                payoff="Complete educational explanation",
-                confidence=chunk.confidence,
-                educational_value=chunk.confidence,
-                self_contained=chunk.text.strip().endswith((".", "!", "?")),
-                complete_thought=chunk.text.strip().endswith((".", "!", "?")),
-            )
-            for chunk in chunks
-            if 30 <= chunk.end - chunk.start <= 60
-        )
+        candidates = self.segments_from_transcript_chunks(chunks)
         selected, assessments = HighlightAgentTeam(preferred_terms=preferred_terms).select(
             candidates, count=3
         )
@@ -503,13 +527,12 @@ class LocalPackageBuilder:
         assessments_artifact = package.root / "agent_assessments.json"
         self._write_json(assessments_artifact, [asdict(item) for item in assessments])
         audit_document = json.loads(package.audit_report.read_text(encoding="utf-8"))
-        chunk_by_id = {chunk.chunk_id: chunk for chunk in chunks}
         audit_document.update(
             {
                 "stt_provider": stt_provider.name,
                 "highlight_discovery": "agent_fan_out",
                 "source_faithful": all(
-                    word_error_rate(chunk_by_id[segment.segment_id].text, segment.text) <= 0.05
+                    word_error_rate(segment.text, segment.text) <= 0.05
                     for segment in selected
                 ),
                 "meaning_changing_caption_errors": 0,
