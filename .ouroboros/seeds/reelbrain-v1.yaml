@@ -1,0 +1,299 @@
+goal: Build ReelBrain v1, a local-first provider-neutral Python/AgentOS runtime and open-source agent team for solo educational creators that ingests one pre-synchronized 5–60 minute talking-head educational video, produces publish-ready short-form and long-form local export packages, learns creator taste only from explicit confirmed feedback, and enforces ACP tool governance, privacy, deletion, budget, verification, and bounded Sleep configuration optimization.
+task_type: code
+brownfield_context:
+  project_type: greenfield
+  context_references: []
+  existing_patterns: []
+  existing_dependencies: []
+constraints:
+  - Certified v1 platform is macOS Apple Silicon with a functional CPU/integrated path and no discrete GPU requirement
+  - Input is one pre-synchronized MP4, MOV, or WebM primary video file, 5–60 minutes, optimized for primarily one-speaker technical or educational footage
+  - Separate camera files, independently recorded audio, slide-deck ingestion, independent screen recordings, multi-camera, and multi-track sync are out of scope for v1
+  - Publish-ready means validated local file package only; direct publishing to TikTok, Instagram Reels, YouTube Shorts, YouTube, or other destinations is out of scope for v1
+  - Short-form output must produce 2–3 agent-discovered 30–60 second 1080x1920 9:16 H.264/AAC MP4 candidates and final package
+  - Long-form output is a hard launch gate and must produce a coherent 5–12 minute 1920x1080 16:9 H.264/AAC MP4 package from 20–60 minute input
+  - Captions must support English, Korean, and mixed English/Korean technical speech; unsupported languages are draft-only or blocked from publish-ready
+  - Caption fixture gate is WER <=5%, zero meaning-changing errors, usable timing, maximum two readable lines, and no essential visual occlusion
+  - Highlight, caption, semantic, safety, permission, rights, privacy, deletion, budget, steering, artifact, and media gates must not regress after personalization or Sleep optimization
+  - Creator is final authority for meaning, educational value, voice, brand, subjective style/pacing, thumbnail acceptance, and export approval
+  - Harness is authoritative for source fidelity, captions, media/artifact validity, traceability, steering, permissions, privacy, deletion, safety, rights, budgets, and approved-tool requirements
+  - Non-waivable source-faithfulness, safety, consent, permission, deletion, publishing, rights, privacy, budget, and governance gates constrain every action
+  - Creator preferences are user-scoped, inspectable, editable, disableable, exportable, importable, deletable, scoped, versioned, and derived only from permitted evidence
+  - Durable memory requires explicit “remember this” or creator confirmation of a proposed plain-language preference and scope; ordinary feedback is episode-only by default
+  - Current steering > current-edit override > specific explicit preference > broader explicit preference > specific confirmed inferred preference > broader confirmed inferred preference > default behavior
+  - Deleted preferences and content must not be resurrected by Sleep, replay, rollback, cache restoration, promoted bundles, backups, or restored state
+  - Raw footage, transcripts, timelines, renders, thumbnails, preference evidence, and derived artifacts remain local by default; cloud/provider use requires disclosed creator approval
+  - API secrets live only in encrypted per-user vault/keychain; ACP stores secret references only; secrets never enter prompts, memory, evidence, logs, bundles, code, or open-source files
+  - Every tool call, data read/write, network request, OS command, provider call, secret request, and side effect passes through a deny-by-default external capability broker
+  - Tools run isolated by filesystem, network, command, CPU, memory, time, disk, and credential boundaries
+  - ACP metadata declares policy but the external broker enforces it
+  - skills.sh distribution installs skills only and never grants tool permissions, secrets, creator-data access, runtime authority, or production trust
+  - Runtime/dependency installation requires explicit approval, version pinning, signed/digest-verified artifacts, rollback, and clean uninstall
+  - Official and custom tools are immutable digest-bound toolbox artifacts under ~/.ReelBrain/toolbox with ACP registry as SSOT
+  - Generated tools remain quarantined until sandbox evaluation and human approval; generated-tool deployment and permission expansion are human-gated
+  - Sleep may auto-promote only bounded signed agent-configuration bundles for opted-in canaries and may not change tool code/schemas, permissions, secrets, data retention, consent, publishing behavior, budget caps, safety gates, or promotion policy
+  - Sleep promotions apply only to new runs and must pass hidden tasks, regression slices, repeated trials, shadow/canary rollout, non-regression, provenance, and rollback gates
+  - Music is off by default and only optional with creator-supplied or explicitly approved rights-cleared provenance-bearing tracks
+  - Speaker-aware reframing must preserve semantically necessary slides, code, screen share, whiteboard, gestures, and educational visuals; cropping required educational evidence is critical failure
+  - Default pacing is natural educational clarity; engagement optimization cannot override semantic fidelity or accessibility; automatic speech speed-up is off by default
+  - Latency target for a 20-minute source is candidate shortlist within 10 minutes and final validated package within 30 minutes; final package within 60 minutes is acceptable; beyond 60 minutes requires explicit approval to continue
+  - Run Ledger plus Project Manifest is the SSOT for each editing job; stale epochs cannot mutate active state; cancellation, resume, retries, approvals, costs, provider calls, tool/config digests, artifacts, and checkpoints are versioned and auditable
+acceptance_criteria:
+  - description: A creator can ingest one supported pre-synchronized educational talking-head video and receive a validated short-form local export package with three diverse finalist clips by default, source-faithful educational value cards, captions, OTIO timeline, manifests, traceability, audit report, and optional approved thumbnail/metadata draft
+    semantic_ac_key: ac_fdc6d75b623416a2
+    verify_command: python -m pytest -q tests/test_short_form_publish_ready.py
+    expected_artifacts:
+      - short-form MP4
+      - captions SRT/VTT
+      - OTIO timeline
+      - asset manifest
+      - rights manifest
+      - source-traceability map
+      - validation/audit report
+  - description: A creator can produce a publish-ready long-form local export package that preserves the confirmed argument map, includes chapters, captions, thumbnail, OTIO timeline, asset/render manifests, rights manifest, source-to-edit traceability, corrected transcript, provenance, cost receipt, and approval history
+    semantic_ac_key: ac_da21cd44d5af1fa0
+    verify_command: python -m pytest -q tests/test_long_form_publish_ready.py
+    expected_artifacts:
+      - long-form MP4
+      - captions SRT/VTT
+      - chapter metadata
+      - thumbnail
+      - OTIO timeline
+      - asset manifest
+      - render recipe
+      - rights manifest
+      - argument/traceability map
+      - validation/audit report
+  - description: Consent-first creator feedback and preference memory visibly learn after 2–3 confirmed examples, apply only in relevant future contexts, abstain or clarify when uncertain, obey current steering and scoped precedence, and support inspection, correction, override, disable, export/import, deletion, and non-resurrection
+    semantic_ac_key: ac_565ad51c0280f891
+    verify_command: python -m pytest -q tests/test_creator_memory_contract.py
+    expected_artifacts:
+      - preference ledger
+      - feedback events
+      - preference snapshots
+      - deletion tombstones
+      - personalized-vs-baseline evaluation report
+  - description: The runtime enforces local-first privacy, explicit provider consent, secret isolation, ACP registry authority, capability-broker checks, toolbox immutability, quarantine, human-gated generated-tool approval, rights/licensing checks, budget reservations, and denied execution for unauthorized data, tools, secrets, destinations, or costs
+    semantic_ac_key: ac_608876032f1a4497
+    verify_command: python -m pytest -q tests/test_governance_runtime.py
+    expected_artifacts:
+      - ACP registry
+      - capability receipts
+      - toolbox manifests
+      - provider receipts
+      - budget ledger
+      - rights manifest
+      - denial logs
+      - approval records
+  - description: The verification harness can move runs through DRAFT, AUTO_VERIFIED, CREATOR_REVIEW, PUBLISH_READY, BLOCKED, REVOKED states using non-compensatory semantic, caption, media, artifact, rights, privacy, permission, budget, steering, deletion, interruption, retry, and deterministic-resume gates with first-attempt and repaired results reported separately
+    semantic_ac_key: ac_0d41e8b8ff14d47b
+    verify_command: python -m pytest -q tests/test_verification_and_run_lifecycle.py
+    expected_artifacts:
+      - run ledger
+      - project manifest
+      - verification report
+      - retry report
+      - checkpoint snapshots
+      - audit bundle
+  - description: Sleep can automatically promote only allowed signed configuration bundles to opted-in canaries after hidden-task, regression, repeated-trial, shadow, canary, latency/cost, and rollback gates, while never mutating creator memory, in-flight runs, tool code/schemas, permissions, secrets, policy boundaries, public skills.sh packages, or data-retention/consent rules
+    semantic_ac_key: ac_2fe02bf70b558f45
+    verify_command: python -m pytest -q tests/test_sleep_promotion_contract.py
+    expected_artifacts:
+      - signed configuration bundle
+      - bundle diff
+      - promotion evidence
+      - canary report
+      - rollback receipt
+      - sealed fixture report
+  - description: 'The v1 release bar is met on macOS Apple Silicon: three consecutive clean governance fixture runs, all must-pass semantic fixtures, >=95% remaining semantic fixtures, >=90% first-pass outputs without major defect, founder PUBLISH_READY on at least three short and three long videos, and private cohort thresholds of >=8/10 approving fidelity and personalization, >=7/10 willing to publish with <=1 minor revision, 100% objective gates, and zero critical failures'
+    semantic_ac_key: ac_c94838d4566dbb53
+    verify_command: python -m pytest -q tests/test_release_bar.py
+    expected_artifacts:
+      - release verification report
+      - fixture results
+      - founder dogfood report
+      - private cohort report
+      - worst-slice report
+ontology_schema:
+  name: ReelBrainV1Project
+  description: Domain model for a local-first ReelBrain editing project, including input media, creator feedback, scoped preference memory, agent/tool governance, export artifacts, verification state, run lifecycle, and Sleep configuration promotion.
+  fields:
+    - name: project_id
+      type: string
+      description: Unique editing project identifier
+      required: true
+    - name: creator_id
+      type: string
+      description: User-scoped creator identifier
+      required: true
+    - name: primary_video
+      type: object
+      description: Single pre-synchronized source video with path, container, stream metadata, duration, hashes, language, and decode status
+      required: true
+    - name: project_manifest
+      type: object
+      description: Versioned source, artifact, rights, preference snapshot, tool/config digest, and approval manifest
+      required: true
+    - name: run_ledger
+      type: object
+      description: SSOT recording workflow epoch, state, checkpoints, tasks, approvals, costs, provider calls, idempotency receipts, side effects, audit events, and artifact hashes
+      required: true
+    - name: output_modes
+      type: array
+      description: Requested short-form and long-form editing paths
+      required: true
+    - name: short_form_package
+      type: object
+      description: Short-form MP4, captions, OTIO timeline, manifests, traceability, validation report, and optional thumbnail/metadata draft
+      required: true
+    - name: long_form_package
+      type: object
+      description: Long-form MP4, captions, chapters, thumbnail, OTIO timeline, render recipe, manifests, argument map, traceability, and audit report
+      required: true
+    - name: argument_map
+      type: object
+      description: Versioned source-grounded semantic units with timestamps, transcript spans, claims, premises, caveats, confidence, ordering, and must-keep status
+      required: true
+    - name: highlight_candidates
+      type: array
+      description: Candidate clips with timestamps, transcript, thesis, takeaway, hook/payoff, required context, risks, confidence, persona judgments, and creator selection state
+      required: true
+    - name: feedback_events
+      type: array
+      description: Append-only evidence events for approvals, rejections, choices, free-text steering, timestamp corrections, caption edits, style selections, overrides, memory consent, deletion, and publishing/export approvals
+      required: true
+    - name: transcript_records
+      type: array
+      description: Versioned source-grounded transcript records with stable identifiers, creator/project ownership, source timestamps, language, text, confidence, correction history, provenance, and deletion state
+      required: true
+    - name: caption_tracks
+      type: array
+      description: Versioned caption tracks linked to transcript records and output artifacts, including cue timing, rendered text, style reference, validation results, correction history, provenance, and deletion state
+      required: true
+    - name: thumbnail_artifacts
+      type: array
+      description: Creator-approved thumbnail artifacts and metadata drafts with stable identifiers, project/run linkage, source or generation provenance, rights status, approval state, hashes, and deletion state
+      required: true
+    - name: provider_consent_receipts
+      type: array
+      description: Scoped creator consent receipts recording provider, destination, disclosed data categories, purpose, expected retention, expected cost, approval time, expiry or revocation, and associated calls
+      required: true
+    - name: vault_references
+      type: array
+      description: Opaque encrypted-vault or OS-keychain references usable only through the capability broker, with provider scope, owning creator, permitted tools, expiry, and revocation state; never contains secret material
+      required: true
+    - name: run_state_transitions
+      type: array
+      description: Append-only workflow state transitions among DRAFT, AUTO_VERIFIED, CREATOR_REVIEW, PUBLISH_READY, BLOCKED, and REVOKED with epoch, actor, reason, evidence, timestamp, and prior/next state
+      required: true
+    - name: deletion_tombstones
+      type: array
+      description: Content-free anti-resurrection records for deleted content and preferences containing identifiers or digests, scope, deletion receipt, fence propagation status, and timestamp without reconstructable creator data
+      required: true
+    - name: agent_identities
+      type: array
+      description: Runtime-owned identities for Meaning Scout, Hook Scout, Creator Advocate, Context Guardian, Showrunner, Toolsmith, Tool Auditor, and Sleep with role, version, allowed ACP surfaces, capability subject, configuration digest, and lifecycle state
+      required: true
+    - name: creator_memory
+      type: object
+      description: Scoped revisable behavioral prior derived only from permitted evidence with readable preferences, provenance, confidence, version, activation history, scopes, tombstones, and deletion fences
+      required: true
+    - name: acp_registry
+      type: object
+      description: Digest-bound versioned SSOT for approved tools, schemas, permissions, agent access, manifests, active pointers, approval receipts, and revocation state
+      required: true
+    - name: capability_policy
+      type: object
+      description: Deny-by-default broker policy binding calls to agent identity, creator/project, epoch, tool digest/version, data classes, filesystem paths, destinations, secrets, budget, and expiry
+      required: true
+    - name: toolbox
+      type: object
+      description: Immutable official, custom, quarantine, disabled, and revoked tool artifact storage metadata under ~/.ReelBrain/toolbox
+      required: true
+    - name: rights_manifest
+      type: object
+      description: Rights, licenses, provenance, attribution, platform/territory permissions, external/generated asset approvals, and publishing blockers
+      required: true
+    - name: budget_ledger
+      type: object
+      description: Reservations, actual costs, caps, provider/tool calls, retries, reconciliation, and budget denial receipts
+      required: true
+    - name: verification_report
+      type: object
+      description: Semantic, caption, media, artifact, rights, privacy, permission, safety, deletion, steering, budget, latency, fixture, and cohort verdicts
+      required: true
+    - name: sleep_bundle
+      type: object
+      description: Signed versioned agent-configuration bundle with diff, provenance, evaluation evidence, canary cohort, active version, compatibility metadata, and rollback receipt
+      required: true
+    - name: installation_profile
+      type: object
+      description: skills.sh/client metadata, runtime version, platform support, dependency plan, digest/signature receipts, setup approvals, conformance results, rollback, and uninstall metadata
+      required: true
+evaluation_principles:
+  - name: NonCompensatoryGates
+    description: Semantic, caption, media, rights, privacy, permission, budget, steering, deletion, safety, and artifact gates must all pass before creator outcome metrics count
+    weight: 1.0
+  - name: CreatorAuthority
+    description: Creator judgment is final for intended meaning, educational value, voice, brand, subjective style, thumbnail acceptance, and export approval
+    weight: 0.95
+  - name: SourceFaithfulness
+    description: Outputs must faithfully preserve source claims, premises, caveats, causality, certainty, attribution, chronology, conclusions, and complete thoughts without unsupported additions or misleading compression
+    weight: 1.0
+  - name: ConsentFirstMemory
+    description: Durable personalization requires explicit confirmed memory consent, scoped applicability, inspectability, correction, override, deletion, and non-resurrection
+    weight: 0.95
+  - name: EnforcedGovernance
+    description: Deny-by-default capability broker, ACP registry, secret isolation, budget reservation, rights checks, sandboxing, human approval boundaries, and auditability are mandatory
+    weight: 1.0
+  - name: LocalFirstPrivacy
+    description: Creator content, preferences, and artifacts remain local by default; external provider use and Sleep/evaluation reuse require explicit disclosed opt-in
+    weight: 0.9
+  - name: PublishReadyCompleteness
+    description: Release quality is measured by creator-approved local export packages with no critical failures and no more than one minor revision, not by draft usefulness alone
+    weight: 0.9
+  - name: ReproducibleEvaluation
+    description: Harness results, fixtures, run ledgers, provenance, retries, canaries, and worst-slice metrics must be versioned, sealed where required, and reproducible across client hosts
+    weight: 0.85
+  - name: BoundedOptimization
+    description: Sleep may improve only bounded configuration artifacts through evidence-gated promotion, non-regression, canary rollout, and immediate rollback without mutating protected policy/data/tool boundaries
+    weight: 0.85
+  - name: OperationalPragmatism
+    description: Latency, cost, cancellation, checkpointing, deterministic resume, and macOS Apple Silicon installability must be measured and controlled without overriding correctness
+    weight: 0.75
+exit_conditions:
+  - name: ReleaseReady
+    description: All v1 acceptance criteria and release-bar thresholds pass on certified macOS Apple Silicon with zero critical failures and required founder/cohort evidence
+    criteria: ship v1
+  - name: BlockedByCriticalFailure
+    description: Any semantic distortion, meaning-changing caption, privacy, permission, deletion, steering, safety, rights, budget, publishing, secret, cross-creator leakage, or unrecoverable artifact failure occurs
+    criteria: block or revoke publish-ready/release until fixed and full evaluation reruns
+  - name: NeedsHumanApproval
+    description: Generated-tool deployment, permission expansion, budget escalation, high-risk Sleep/policy-boundary change, external provider use, external/generated asset approval, or direct publishing request is encountered
+    criteria: pause and require explicit human approval
+  - name: DraftOnly
+    description: Input language, platform, media stream, artifact validity, provider consent, rights manifest, or semantic confidence cannot satisfy publish-ready gates
+    criteria: downgrade to draft-only or fail ingest/export with diagnostic
+  - name: AutomationStop
+    description: More than two targeted automatic repairs are required, repeated critical failure occurs, stale epoch result appears, or run exceeds 60 minutes without approval
+    criteria: stop automation and request creator decision
+  - name: OptimizationFrozen
+    description: Sleep candidate lacks sealed fixture access, budget completion, hidden-task/regression/canary evidence, non-regression, or rollback receipt
+    criteria: deny promotion and keep prior bundle
+  - name: MemoryFence
+    description: Preference/content deletion, revoked consent, or tombstone match is encountered
+    criteria: remove from retrieval/evaluation/replay and prevent reconstruction or reactivation
+metadata:
+  seed_id: seed_48b2b11668a7
+  version: 1.0.0
+  created_at: '2026-07-20T09:53:37.116776Z'
+  ambiguity_score: 0.055
+  interview_id: interview_20260720_073243
+  client_gates:
+    - seed_ready_acceptance_guard
+    - restate_goal_approved
+  parent_seed_id: null
+  generation_mode: normal
+  degraded: false
+  unresolved_slots: []
+  recovery_reason: null
