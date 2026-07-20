@@ -194,10 +194,15 @@ class PreferenceStore:
         counts: dict[str, list[FeedbackEvent]] = {}
         for event in matching:
             counts.setdefault(event.value, []).append(event)
-        value, evidence = max(counts.items(), key=lambda item: len(item[1]))
+        ranked = sorted(counts.items(), key=lambda item: len(item[1]), reverse=True)
+        value, evidence = ranked[0]
         if len(evidence) < minimum_examples:
             return None
+        if len(ranked) > 1 and len(ranked[1][1]) == len(evidence):
+            return None
         confidence = len(evidence) / len(matching)
+        if confidence <= 0.5:
+            return None
         return PreferenceProposal(
             creator_id=creator_id,
             category=category,

@@ -241,6 +241,22 @@ def test_inconsistent_examples_do_not_create_a_high_confidence_proposal():
     ) is None
 
 
+def test_tied_preference_evidence_abstains_instead_of_arbitrary_selection():
+    store = PreferenceStore()
+    for index, value in enumerate(("fast", "slow", "fast", "slow")):
+        store.record_feedback(
+            creator_id="creator-1",
+            project_id=f"project-{index}",
+            category="pacing",
+            value=value,
+            scope=SHORT_TECH,
+        )
+
+    assert store.propose(
+        creator_id="creator-1", category="pacing", scope=SHORT_TECH
+    ) is None
+
+
 def test_writes_all_declared_memory_artifacts_and_transfer_report(tmp_path):
     store = PreferenceStore()
     record_examples(store, 2)

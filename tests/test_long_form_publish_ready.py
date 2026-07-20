@@ -77,6 +77,9 @@ def test_builds_real_5_minute_16x9_publish_ready_long_package(source_video, tmp_
     audit = json.loads(package.audit_report.read_text())
     assert audit["status"] == "PUBLISH_READY"
     assert audit["argument_map_preserved"] is True
+    assert audit["caption_validation"]["caption_word_error_rate"] == 0
+    assert audit["caption_validation"]["timing_usable"] is True
+    assert audit["caption_validation"]["layout_passed"] is True
 
 
 def test_long_package_requires_creator_approval(source_video, tmp_path):
@@ -122,6 +125,25 @@ def test_argument_map_rejects_incomplete_thoughts(source_video, tmp_path):
             creator_id="creator-1",
             rights=rights(),
             corrected_transcript="text",
+            creator_approval_receipt="approved",
+            cost_receipt={"actual": 0},
+        )
+
+
+def test_long_package_rejects_caption_text_not_grounded_in_corrected_transcript(
+    source_video, tmp_path
+):
+    segment = argument_segment(1, 0, 300)
+
+    with pytest.raises(Exception, match="long_caption_validation_failed"):
+        LocalPackageBuilder(output_fps=1).build_long_package(
+            source=source_video,
+            argument_map=(segment,),
+            output_dir=tmp_path / "caption-mismatch",
+            project_id="project-1",
+            creator_id="creator-1",
+            rights=rights(),
+            corrected_transcript="This transcript says something materially different.",
             creator_approval_receipt="approved",
             cost_receipt={"actual": 0},
         )

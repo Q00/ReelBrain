@@ -300,13 +300,14 @@ def caption_cues(
 
     total_words = sum(len(group) for group in groups)
     cues: list[CaptionCue] = []
-    elapsed = 0.0
-    for index, group in enumerate(groups):
-        cue_duration = duration * len(group) / total_words
-        end = duration if index == len(groups) - 1 else elapsed + cue_duration
+    words_before = 0
+    for group in groups:
+        start = duration * words_before / total_words
+        natural_end = duration * (words_before + len(group)) / total_words
+        end = min(natural_end, start + max_cue_seconds)
         lines = textwrap.wrap(" ".join(group), width=max_chars_per_line)
-        cues.append(CaptionCue(elapsed, end, "\n".join(lines)))
-        elapsed = end
+        cues.append(CaptionCue(start, end, "\n".join(lines)))
+        words_before += len(group)
     return tuple(cues)
 
 
@@ -781,16 +782,33 @@ class LocalPackageBuilder:
             raise MediaError("long_form_duration_must_be_5_to_12_minutes")
         if not segments or not all(segment.complete_thought for segment in segments):
             raise MediaError("argument_map_incomplete")
+        selected_transcript = " ".join(segment.text.strip() for segment in segments)
+        cues: list[CaptionCue] = []
+        offset = 0.0
+        for segment in segments:
+            cues.extend(
+                CaptionCue(
+                    start=cue.start + offset,
+                    end=cue.end + offset,
+                    text=cue.text,
+                )
+                for cue in caption_cues(segment.text, segment.duration)
+            )
+            offset += segment.duration
+        caption_validation = validate_captions(
+            source_reference=corrected_transcript,
+            highlight_text=selected_transcript,
+            cues=cues,
+            reference_kind="creator_corrected_transcript",
+            reference_confidence=1.0,
+        )
+        if not caption_validation.passed:
+            raise MediaError("long_caption_validation_failed")
         root.mkdir(parents=True, exist_ok=True)
         output = root / "final_long.mp4"
         self._render_sequence(info.path, segments, output, width=1920, height=1080)
         self._validate_output(output, width=1920, height=1080, minimum=300, maximum=720)
 
-        cues: list[CaptionCue] = []
-        offset = 0.0
-        for segment in segments:
-            cues.append(CaptionCue(offset, offset + segment.duration, segment.text))
-            offset += segment.duration
         srt = root / "captions.srt"
         vtt = root / "captions.vtt"
         write_captions(cues, srt, vtt, self._require_guard())
@@ -868,8 +886,14 @@ class LocalPackageBuilder:
             {
                 "status": "PUBLISH_READY",
                 "output_mode": "long",
-                "argument_map_preserved": True,
-                "complete_thoughts": True,
+                "argument_map_preserved": [
+                    segment.segment_id for segment in segments
+                ]
+                == [row["segment_id"] for row in chapter_rows],
+                "complete_thoughts": all(
+                    segment.complete_thought for segment in segments
+                ),
+                "caption_validation": asdict(caption_validation),
                 "creator_approval_receipt": creator_approval_receipt,
                 "duration_seconds": total_duration,
             },
