@@ -90,6 +90,7 @@ class GPTImage2Tool:
         output_path: Path | str,
         guard: RuntimeGuard,
         provider_consent_receipt: dict[str, object],
+        budget_reservation_receipt: dict[str, object],
         secret_resolver: Callable[[str], str],
         secret_ref: str = "keychain://ReelBrain/openai",
         creator_approval_receipt: str,
@@ -103,8 +104,7 @@ class GPTImage2Tool:
         destination = Path(output_path).expanduser().resolve()
         guard.authorize_path(destination, operation="write", data_class="generated_image")
 
-        def dispatch() -> dict[str, object]:
-            api_key = secret_resolver(secret_ref)
+        def dispatch(api_key: str) -> dict[str, object]:
             return self.transport.generate(
                 api_key=api_key,
                 payload={
@@ -123,6 +123,13 @@ class GPTImage2Tool:
             official=True,
             provider=self.provider,
             consent_receipt=provider_consent_receipt,
+            destination_host="api.openai.com",
+            budget_reservation_receipt=budget_reservation_receipt,
+            secret_ref=secret_ref,
+            secret_store_id="reelbrain-keychain",
+            secret_store_kind="macos_keychain",
+            secret_store_source="ReelBrain/openai",
+            secret_resolver=secret_resolver,
         )
         data = response.get("data", [])
         if not data or not data[0].get("b64_json"):

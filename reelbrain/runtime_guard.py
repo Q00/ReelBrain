@@ -16,8 +16,15 @@ from typing import Iterable, Mapping
 from .governance import (
     ACPRegistrySnapshot,
     ACPToolIdentity,
+    ApprovedSecretStore,
+    BudgetReservationReceipt,
     CapabilityBroker,
+    DestinationAllowlistEntry,
     LocalDataAccessRequest,
+    OutboundDestinationRequest,
+    ProviderConsentReceipt,
+    SecretAccessGrant,
+    SecretAccessRequest,
     ToolCapabilityGrant,
     ToolExecutionRequest,
     ToolExecutionSession,
@@ -57,7 +64,6 @@ class RuntimeGuard:
         tools: list[ACPToolIdentity] = []
         grants: list[ToolCapabilityGrant] = []
         self._tool_by_name: dict[str, ACPToolIdentity] = {}
-        self._executable_by_name: dict[str, Path] = {}
         self._official_signer = ManifestSigner(
             key_id="reelbrain-official-bootstrap-v1",
             key=b"reelbrain-official-bootstrap-verification-key-v1",
@@ -96,7 +102,6 @@ class RuntimeGuard:
             )
             tools.append(tool)
             self._tool_by_name[name] = tool
-            self._executable_by_name[name] = system_path
             grants.append(
                 ToolCapabilityGrant(
                     capability="local:execute",
@@ -168,10 +173,19 @@ class RuntimeGuard:
         if not decision.allowed:
             self.denial_logs.append(payload)
         decision.require_allowed()
-        if sha256_file(self._executable_by_name[name]) != tool.digest:
-            raise PermissionError("registered_system_tool_digest_changed")
+        for argument in command[1:]:
+            candidate = Path(argument).expanduser()
+            if candidate.is_absolute() or candidate.exists():
+                self.authorize_path(
+                    candidate,
+                    operation="read",
+                    data_class="tool_argument_path",
+                )
+        immutable_executable = Path(tool.toolbox_path)
+        if sha256_file(immutable_executable) != tool.digest:
+            raise PermissionError("registered_toolbox_artifact_digest_changed")
         try:
-            governed_command = [str(self._executable_by_name[name]), *command[1:]]
+            governed_command = [str(immutable_executable), *command[1:]]
             sandboxed_command = self._sandbox_command(governed_command)
             sandbox_tmp = self.workspace_root / ".sandbox-tmp"
             self.authorize_path(
@@ -200,21 +214,52 @@ class RuntimeGuard:
         if not sandbox_exec.is_file():
             raise RuntimeError("macos_sandbox_exec_unavailable")
         write_roots = {self.workspace_root}
-        write_rules = " ".join(
-            f'(subpath {json.dumps(str(path.resolve(strict=False)))})'
+        read_roots = {
+            *self.broker.approved_roots,
+            self.toolbox.root,
+            Path("/System"),
+            Path("/Library"),
+            Path("/opt/homebrew"),
+            Path("/usr/lib"),
+            Path("/usr/share"),
+            Path("/private/etc"),
+            Path("/private/var/db/timezone"),
+            Path.home() / "Library",
+            Path.home() / ".CFUserTextEncoding",
+        }
+        readable_roots = {
+            path.resolve(strict=False) for path in read_roots if path.exists()
+        }
+        readable_ancestors = {
+            ancestor
+            for path in readable_roots
+            for ancestor in path.parents
+        }
+        readable_literals = {
+            *readable_ancestors,
+            Path("/dev/null"),
+            Path("/dev/urandom"),
+            Path("/dev/random"),
+        }
+        read_denials = " ".join(
+            f'(require-not (subpath {json.dumps(str(path.resolve(strict=False)))}))'
+            for path in sorted(readable_roots, key=str)
+        )
+        read_denials += " " + " ".join(
+            f'(require-not (literal {json.dumps(str(path))}))'
+            for path in sorted(readable_literals, key=str)
+        )
+        write_denials = " ".join(
+            f'(require-not (subpath {json.dumps(str(path.resolve(strict=False)))}))'
             for path in sorted(write_roots, key=str)
         )
         profile = " ".join(
             (
                 "(version 1)",
-                "(deny default)",
-                "(allow process*)",
-                "(allow sysctl-read)",
-                "(allow mach-lookup)",
-                "(allow ipc-posix-shm)",
-                "(allow signal)",
-                "(allow file-read*)",
-                f"(allow file-write* {write_rules} (literal \"/dev/null\"))",
+                "(allow default)",
+                f"(deny file-read-data (require-all {read_denials}))",
+                f'(deny file-write* (require-all {write_denials} '
+                '(require-not (literal "/dev/null"))))',
                 "(deny network*)",
             )
         )
@@ -245,6 +290,13 @@ class RuntimeGuard:
         official: bool,
         provider: str | None = None,
         consent_receipt: Mapping[str, object] | None = None,
+        destination_host: str | None = None,
+        budget_reservation_receipt: Mapping[str, object] | None = None,
+        secret_ref: str | None = None,
+        secret_store_id: str | None = None,
+        secret_store_kind: str | None = None,
+        secret_store_source: str | None = None,
+        secret_resolver=None,
     ):
         """Authorize in-process agent/provider adapters through ACP before dispatch."""
 
@@ -289,15 +341,21 @@ class RuntimeGuard:
             )
         if capability not in record.manifest.capabilities:
             raise PermissionError("callback_capability_not_approved")
+        provider_receipt: dict[str, object] | None = None
+        budget_receipt: dict[str, object] | None = None
+        invocation_id: str | None = None
         if provider is not None:
-            receipt = dict(consent_receipt or {})
+            provider_receipt = dict(consent_receipt or {})
             required = {
                 "provider": provider,
                 "tool_id": tool_id,
                 "project_id": self.project_id,
                 "creator_id": self.creator_id,
+                "destination": destination_host,
             }
-            if any(receipt.get(key) != value for key, value in required.items()):
+            if not destination_host:
+                raise PermissionError("provider_destination_required")
+            if any(provider_receipt.get(key) != value for key, value in required.items()):
                 denial = {
                     "allowed": False,
                     "reason": "provider_consent_required",
@@ -305,20 +363,250 @@ class RuntimeGuard:
                 }
                 self.denial_logs.append(denial)
                 raise PermissionError("provider_consent_required")
-            if not receipt.get("data_categories") or not receipt.get("purpose"):
+            if (
+                not provider_receipt.get("data_categories")
+                or not provider_receipt.get("purpose")
+                or not provider_receipt.get("expected_retention")
+                or not provider_receipt.get("expected_cost")
+                or not provider_receipt.get("approval_receipt_id")
+            ):
                 raise PermissionError("provider_consent_disclosure_incomplete")
-            self.provider_receipts.append(receipt)
-        decision = {
-            "allowed": True,
-            "reason": "authorized_callback_tool",
-            "tool_id": tool_id,
-            "tool_digest": record.manifest.digest,
-            "toolbox_path": str(record.artifact_path),
-            "capabilities": [capability],
-            "provider": provider,
-        }
-        self.capability_receipts.append(decision)
-        return dispatch()
+            invocation_id = str(provider_receipt.get("invocation_id") or "").strip()
+            if not invocation_id:
+                raise PermissionError("provider_consent_invocation_required")
+            budget_receipt = dict(budget_reservation_receipt or {})
+            budget_required = {
+                "requester_id": self.requester_id,
+                "session_id": self.session_id,
+                "tool_id": tool_id,
+                "project_id": self.project_id,
+                "creator_id": self.creator_id,
+            }
+            if any(budget_receipt.get(key) != value for key, value in budget_required.items()):
+                self.denial_logs.append(
+                    {
+                        "allowed": False,
+                        "reason": "budget_reservation_required",
+                        "tool_id": tool_id,
+                        "provider": provider,
+                    }
+                )
+                raise PermissionError("budget_reservation_required")
+
+        tool_identity = ACPToolIdentity(
+            tool_id=tool_id,
+            digest=record.manifest.digest,
+            toolbox_path=record.artifact_path,
+            lifecycle="approved",
+            origin=record.manifest.origin,
+            human_approval_receipt_id=record.manifest.approval_receipt_id,
+        )
+        broker = CapabilityBroker(
+            workspace_root=self.workspace_root,
+            local_allowlist=self.broker.local_allowlist,
+            destination_allowlist=(
+                (DestinationAllowlistEntry("host", destination_host),)
+                if destination_host is not None
+                else ()
+            ),
+            provider_consents=(
+                (
+                    ProviderConsentReceipt(
+                        provider=provider or "",
+                        tool_id=tool_id,
+                        project_id=self.project_id,
+                        creator_id=self.creator_id,
+                        invocation_id=invocation_id,
+                    ),
+                )
+                if provider is not None
+                else ()
+            ),
+            tool_sessions=(
+                ToolExecutionSession(
+                    session_id=self.session_id,
+                    requester_id=self.requester_id,
+                    agent_id=self.agent_id,
+                    project_id=self.project_id,
+                    creator_id=self.creator_id,
+                ),
+            ),
+            tool_capability_grants=(
+                ToolCapabilityGrant(
+                    capability=capability,
+                    tool_id=tool_id,
+                    requester_id=self.requester_id,
+                    session_id=self.session_id,
+                    project_id=self.project_id,
+                    creator_id=self.creator_id,
+                ),
+            ),
+            budget_reservations=(
+                (
+                    BudgetReservationReceipt(
+                        reservation_id=str(budget_receipt.get("reservation_id") or ""),
+                        requester_id=str(budget_receipt.get("requester_id") or ""),
+                        session_id=str(budget_receipt.get("session_id") or ""),
+                        tool_id=str(budget_receipt.get("tool_id") or ""),
+                        project_id=str(budget_receipt.get("project_id") or ""),
+                        creator_id=str(budget_receipt.get("creator_id") or ""),
+                        capabilities=tuple(budget_receipt.get("capabilities") or ()),
+                        reserved_amount_cents=int(
+                            budget_receipt.get("reserved_amount_cents") or 0
+                        ),
+                        metered_units=int(budget_receipt.get("metered_units") or 0),
+                        cost_authorization_receipt_id=str(
+                            budget_receipt.get("cost_authorization_receipt_id") or ""
+                        ),
+                        state=str(budget_receipt.get("state") or "reserved"),
+                        revoked=bool(budget_receipt.get("revoked", False)),
+                    ),
+                )
+                if provider is not None
+                else ()
+            ),
+            secret_stores=(
+                (
+                    ApprovedSecretStore(
+                        store_id=secret_store_id or "",
+                        kind=secret_store_kind or "",
+                        source=secret_store_source or "",
+                    ),
+                )
+                if secret_ref is not None
+                else ()
+            ),
+            secret_access_grants=(
+                (
+                    SecretAccessGrant(
+                        store_id=secret_store_id or "",
+                        secret_ref=secret_ref,
+                        tool_id=tool_id,
+                        execution_principal=self.requester_id,
+                        project_id=self.project_id,
+                        creator_id=self.creator_id,
+                    ),
+                )
+                if secret_ref is not None
+                else ()
+            ),
+            acp_registry=ACPRegistrySnapshot((tool_identity,)),
+        )
+        execution_request = ToolExecutionRequest(
+            operation="execute_tool",
+            requester_id=self.requester_id,
+            session_id=self.session_id,
+            agent_id=self.agent_id,
+            project_id=self.project_id,
+            creator_id=self.creator_id,
+            tool_id=tool_id,
+            tool_digest=record.manifest.digest,
+            toolbox_path=record.artifact_path,
+            capabilities=(capability,),
+            paid=provider is not None,
+            budget_reservation_id=(
+                str(budget_receipt.get("reservation_id") or "")
+                if budget_receipt is not None
+                else None
+            ),
+            cost_authorization_receipt_id=(
+                str(budget_receipt.get("cost_authorization_receipt_id") or "")
+                if budget_receipt is not None
+                else None
+            ),
+            provider=provider,
+            invocation_id=invocation_id,
+        )
+        execution_decision = broker.authorize_tool_execution(execution_request)
+        self.capability_receipts.append(asdict(execution_decision))
+        if not execution_decision.allowed:
+            self.denial_logs.append(asdict(execution_decision))
+        execution_decision.require_allowed()
+
+        if provider is not None:
+            outbound_request = OutboundDestinationRequest(
+                operation="transmit",
+                provider=provider,
+                agent_id=self.agent_id,
+                project_id=self.project_id,
+                creator_id=self.creator_id,
+                host=destination_host,
+                tool_id=tool_id,
+                tool_digest=record.manifest.digest,
+                toolbox_path=record.artifact_path,
+                invocation_id=invocation_id,
+            )
+            outbound_decision = broker.authorize_outbound_destination(outbound_request)
+            self.capability_receipts.append(asdict(outbound_decision))
+            if not outbound_decision.allowed:
+                self.denial_logs.append(asdict(outbound_decision))
+            outbound_decision.require_allowed()
+            self.provider_receipts.append(provider_receipt or {})
+            reservation_record = {
+                **(budget_receipt or {}),
+                "state": "reserved",
+                "provider": provider,
+                "invocation_id": invocation_id,
+            }
+            self.budget_ledger.append(reservation_record)
+            self.approval_records.append(
+                {
+                    "kind": "provider_consent",
+                    "approval_receipt_id": provider_receipt.get("approval_receipt_id"),
+                    "provider": provider,
+                    "tool_id": tool_id,
+                    "invocation_id": invocation_id,
+                }
+            )
+        resolved_secret = None
+        if secret_ref is not None:
+            if not secret_store_id or not secret_store_kind or not secret_store_source:
+                raise PermissionError("secret_store_required")
+            if secret_resolver is None:
+                raise PermissionError("secret_resolver_required")
+            secret_request = SecretAccessRequest(
+                operation="read_secret",
+                store_id=secret_store_id,
+                secret_ref=secret_ref,
+                tool_id=tool_id,
+                execution_principal=self.requester_id,
+                agent_id=self.agent_id,
+                project_id=self.project_id,
+                creator_id=self.creator_id,
+                tool_digest=record.manifest.digest,
+                toolbox_path=record.artifact_path,
+                requester_id=self.requester_id,
+                session_id=self.session_id,
+            )
+            secret_decision = broker.authorize_secret_access(secret_request)
+            self.capability_receipts.append(asdict(secret_decision))
+            if not secret_decision.allowed:
+                self.denial_logs.append(asdict(secret_decision))
+            secret_decision.require_allowed()
+            resolved_secret = secret_resolver(secret_ref)
+        try:
+            result = dispatch(resolved_secret) if secret_ref is not None else dispatch()
+        except Exception:
+            if provider is not None:
+                self.budget_ledger.append(
+                    {
+                        **(budget_receipt or {}),
+                        "state": "released_after_failure",
+                        "provider": provider,
+                        "invocation_id": invocation_id,
+                    }
+                )
+            raise
+        if provider is not None:
+            self.budget_ledger.append(
+                {
+                    **(budget_receipt or {}),
+                    "state": "consumed",
+                    "provider": provider,
+                    "invocation_id": invocation_id,
+                }
+            )
+        return result
 
     def write_audit_artifacts(
         self,

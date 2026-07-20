@@ -249,6 +249,7 @@ class SleepPromoter:
     ) -> None:
         if not self.signer.verify(bundle):
             raise ValueError("sleep_bundle_signature_invalid")
+        self._validate_bundle_boundary(bundle)
         if target != "managed_canary":
             raise ValueError("automatic_local_or_public_promotion_denied")
         if not evidence.opted_in_canary:
@@ -276,6 +277,32 @@ class SleepPromoter:
         if not evidence.budget_complete:
             raise ValueError("budget_truncated_evaluation_denied")
 
+    @staticmethod
+    def _validate_bundle_boundary(bundle: ConfigurationBundle) -> None:
+        families = set(bundle.configuration)
+        protected = families & PROTECTED_CONFIGURATION_FAMILIES
+        unknown = families - ALLOWED_CONFIGURATION_FAMILIES - PROTECTED_CONFIGURATION_FAMILIES
+        if protected:
+            raise ValueError(f"protected_sleep_change:{','.join(sorted(protected))}")
+        if unknown:
+            raise ValueError(f"unknown_sleep_change_family:{','.join(sorted(unknown))}")
+        if not families:
+            raise ValueError("bounded_sleep_change_required")
+        required_compatibility = {
+            "runtime",
+            "policy",
+            "acp_schema",
+            "toolbox_digest",
+            "provider",
+        }
+        missing = sorted(
+            key
+            for key in required_compatibility
+            if not str(bundle.compatibility.get(key, "")).strip()
+        )
+        if missing:
+            raise ValueError(f"sleep_bundle_compatibility_missing:{','.join(missing)}")
+
     def rollback(self, *, reason: str) -> RollbackReceipt:
         if self.active_bundle is None or self.last_known_good is None:
             raise ValueError("last_known_good_bundle_required")
@@ -302,6 +329,7 @@ class SleepPromoter:
 
         if not self.signer.verify(bundle):
             raise ValueError("sleep_bundle_signature_invalid")
+        self._validate_bundle_boundary(bundle)
         root = Path(output_dir).resolve()
         root.mkdir(parents=True, exist_ok=True)
         paths = {

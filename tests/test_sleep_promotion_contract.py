@@ -114,6 +114,42 @@ def test_unsigned_or_tampered_bundle_never_promotes():
         promoter.promote(unsigned, passing_promotion_evidence())
 
 
+def test_direct_signed_bundle_cannot_bypass_protected_or_unknown_family_boundary():
+    promoter = make_promoter()
+    for family, reason in (
+        ("creator_memory", "protected_sleep_change"),
+        ("arbitrary_runtime_code", "unknown_sleep_change_family"),
+    ):
+        bundle = promoter.signer.sign(
+            ConfigurationBundle(
+                bundle_id=f"bundle-{family}",
+                version="1.0.0",
+                parent_bundle_id=None,
+                configuration={family: {"changed": True}},
+                compatibility=COMPATIBILITY,
+            )
+        )
+
+        with pytest.raises(ValueError, match=reason):
+            promoter.promote(bundle, passing_promotion_evidence())
+
+
+def test_promotion_requires_complete_runtime_compatibility_metadata():
+    promoter = make_promoter()
+    bundle = promoter.signer.sign(
+        ConfigurationBundle(
+            bundle_id="bundle-missing-compatibility",
+            version="1.0.0",
+            parent_bundle_id=None,
+            configuration={"prompts": {"showrunner": "safe"}},
+            compatibility={"runtime": "0.1"},
+        )
+    )
+
+    with pytest.raises(ValueError, match="sleep_bundle_compatibility_missing"):
+        promoter.promote(bundle, passing_promotion_evidence())
+
+
 def test_local_self_hosted_and_public_skill_auto_promotion_are_denied():
     promoter = make_promoter()
     bundle = signed_bundle(promoter)

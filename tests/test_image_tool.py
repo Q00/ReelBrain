@@ -25,10 +25,29 @@ def consent():
         "tool_id": "openai-gpt-image-2",
         "project_id": "project-1",
         "creator_id": "creator-1",
+        "destination": "api.openai.com",
+        "invocation_id": "image-call-1",
+        "approval_receipt_id": "provider-consent-1",
         "data_categories": ["prompt", "brand_context"],
         "purpose": "thumbnail generation",
         "expected_retention": "provider request lifecycle",
         "expected_cost": "approved image generation call",
+    }
+
+
+def budget():
+    return {
+        "reservation_id": "budget-image-1",
+        "requester_id": "reelbrain-runtime",
+        "session_id": "runtime:project-1",
+        "tool_id": "openai-gpt-image-2",
+        "project_id": "project-1",
+        "creator_id": "creator-1",
+        "capabilities": ["image:generate"],
+        "reserved_amount_cents": 10,
+        "metered_units": 1,
+        "cost_authorization_receipt_id": "cost-approved-image-1",
+        "state": "reserved",
     }
 
 
@@ -47,6 +66,7 @@ def test_gpt_image_2_requires_consent_and_writes_image_plus_provenance(tmp_path)
         output_path=tmp_path / "thumbnail.png",
         guard=guard,
         provider_consent_receipt=consent(),
+        budget_reservation_receipt=budget(),
         secret_resolver=lambda ref: "test-api-key",
         creator_approval_receipt="creator-approved-thumbnail-1",
     )
@@ -58,6 +78,8 @@ def test_gpt_image_2_requires_consent_and_writes_image_plus_provenance(tmp_path)
     assert transport.calls[0][1]["model"] == "gpt-image-2"
     assert "test-api-key" not in json.dumps(guard.capability_receipts)
     assert "test-api-key" not in artifact.provenance_path.read_text()
+    assert [row["state"] for row in guard.budget_ledger] == ["reserved", "consumed"]
+    assert guard.approval_records[0]["approval_receipt_id"] == "provider-consent-1"
 
 
 def test_gpt_image_2_denies_missing_provider_consent_before_secret_resolution(tmp_path):
@@ -76,6 +98,7 @@ def test_gpt_image_2_denies_missing_provider_consent_before_secret_resolution(tm
             output_path=tmp_path / "thumbnail.png",
             guard=guard,
             provider_consent_receipt={},
+            budget_reservation_receipt=budget(),
             secret_resolver=lambda ref: secret_calls.append(ref) or "secret",
             creator_approval_receipt="approved",
         )
@@ -98,6 +121,7 @@ def test_gpt_image_2_requires_creator_approval(tmp_path):
             output_path=tmp_path / "thumbnail.png",
             guard=guard,
             provider_consent_receipt=consent(),
+            budget_reservation_receipt=budget(),
             secret_resolver=lambda ref: "secret",
             creator_approval_receipt="",
         )

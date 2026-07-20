@@ -2818,6 +2818,46 @@ def test_external_stt_callback_requires_disclosed_provider_consent_before_dispat
             official=True,
             provider="provider-a",
             consent_receipt=None,
+            destination_host="stt.provider-a.test",
+            budget_reservation_receipt=None,
+            dispatch=lambda: calls.append("called"),
+        )
+
+    consent_receipt = {
+        "provider": "provider-a",
+        "tool_id": "cloud-stt",
+        "project_id": "project-1",
+        "creator_id": "creator-1",
+        "destination": "stt.provider-a.test",
+        "invocation_id": "stt-call-1",
+        "approval_receipt_id": "provider-consent-stt-1",
+        "data_categories": ["audio"],
+        "purpose": "transcription",
+        "expected_retention": "provider request lifecycle",
+        "expected_cost": "disclosed-before-run",
+    }
+    budget_receipt = {
+        "reservation_id": "budget-stt-1",
+        "requester_id": "reelbrain-runtime",
+        "session_id": "runtime:project-1",
+        "tool_id": "cloud-stt",
+        "project_id": "project-1",
+        "creator_id": "creator-1",
+        "capabilities": ["stt:transcribe"],
+        "reserved_amount_cents": 20,
+        "cost_authorization_receipt_id": "cost-approved-stt-1",
+        "state": "reserved",
+    }
+
+    with pytest.raises(PermissionError, match="budget_reservation_required"):
+        guard.run_callback_tool(
+            tool_id="cloud-stt",
+            capability="stt:transcribe",
+            official=True,
+            provider="provider-a",
+            consent_receipt=consent_receipt,
+            destination_host="stt.provider-a.test",
+            budget_reservation_receipt=None,
             dispatch=lambda: calls.append("called"),
         )
 
@@ -2826,22 +2866,17 @@ def test_external_stt_callback_requires_disclosed_provider_consent_before_dispat
         capability="stt:transcribe",
         official=True,
         provider="provider-a",
-        consent_receipt={
-            "provider": "provider-a",
-            "tool_id": "cloud-stt",
-            "project_id": "project-1",
-            "creator_id": "creator-1",
-            "data_categories": ["audio"],
-            "purpose": "transcription",
-            "expected_retention": "provider request lifecycle",
-            "expected_cost": "disclosed-before-run",
-        },
+        consent_receipt=consent_receipt,
+        destination_host="stt.provider-a.test",
+        budget_reservation_receipt=budget_receipt,
         dispatch=lambda: calls.append("called") or "transcript",
     )
 
     assert calls == ["called"]
     assert result == "transcript"
     assert guard.provider_receipts[0]["purpose"] == "transcription"
+    assert [row["state"] for row in guard.budget_ledger] == ["reserved", "consumed"]
+    assert guard.approval_records[0]["kind"] == "provider_consent"
 
 
 def test_os_sandbox_denies_network_even_for_registered_tool(tmp_path):
@@ -2860,6 +2895,49 @@ def test_os_sandbox_denies_network_even_for_registered_tool(tmp_path):
 
     with pytest.raises(RuntimeError, match="governed_tool_failed"):
         guard.run_tool(["curl", "--max-time", "2", "https://example.com"])
+
+
+def test_os_sandbox_denies_reads_outside_approved_roots(tmp_path):
+    import platform
+
+    from reelbrain.runtime_guard import RuntimeGuard
+
+    if platform.system() != "Darwin":
+        pytest.skip("macOS certified sandbox test")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("creator-private", encoding="utf-8")
+    guard = RuntimeGuard(
+        workspace_root=workspace,
+        project_id="project-1",
+        creator_id="creator-1",
+        tool_names=("cat",),
+    )
+
+    with pytest.raises(PermissionError, match="path_outside_approved_local_scopes"):
+        guard.run_tool(["cat", str(outside)])
+
+
+def test_runtime_executes_immutable_toolbox_artifact(monkeypatch, tmp_path):
+    from reelbrain.runtime_guard import RuntimeGuard
+
+    guard = RuntimeGuard(
+        workspace_root=tmp_path,
+        project_id="project-1",
+        creator_id="creator-1",
+        tool_names=("ffprobe",),
+    )
+    captured = []
+    monkeypatch.setattr(
+        guard,
+        "_sandbox_command",
+        lambda command: captured.append(command) or ["/usr/bin/true"],
+    )
+
+    guard.run_tool(["ffprobe", "-version"])
+
+    assert captured[0][0] == str(guard.toolbox.resolve_active("ffprobe").artifact_path)
 
 
 def test_os_sandbox_disable_environment_flag_fails_closed(tmp_path, monkeypatch):

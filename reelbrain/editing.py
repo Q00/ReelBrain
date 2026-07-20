@@ -626,6 +626,7 @@ class LocalPackageBuilder:
         preferred_terms: Iterable[str] = (),
         approved_thumbnail: bool = False,
         provider_consent_receipt: dict[str, object] | None = None,
+        budget_reservation_receipt: dict[str, object] | None = None,
     ) -> PackagePaths:
         """Ingest one video, transcribe, fan out highlight scouts, and package."""
 
@@ -647,6 +648,8 @@ class LocalPackageBuilder:
                 official=bool(getattr(stt_provider, "official", False)),
                 provider=getattr(stt_provider, "provider", None),
                 consent_receipt=provider_consent_receipt,
+                destination_host=getattr(stt_provider, "destination_host", None),
+                budget_reservation_receipt=budget_reservation_receipt,
             )
         )
         stt_capability_receipts = list(self._require_guard().capability_receipts)
