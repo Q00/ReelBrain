@@ -2842,3 +2842,36 @@ def test_external_stt_callback_requires_disclosed_provider_consent_before_dispat
     assert calls == ["called"]
     assert result == "transcript"
     assert guard.provider_receipts[0]["purpose"] == "transcription"
+
+
+def test_os_sandbox_denies_network_even_for_registered_tool(tmp_path):
+    import platform
+
+    from reelbrain.runtime_guard import RuntimeGuard
+
+    if platform.system() != "Darwin":
+        pytest.skip("macOS certified sandbox test")
+    guard = RuntimeGuard(
+        workspace_root=tmp_path,
+        project_id="project-1",
+        creator_id="creator-1",
+        tool_names=("curl",),
+    )
+
+    with pytest.raises(RuntimeError, match="governed_tool_failed"):
+        guard.run_tool(["curl", "--max-time", "2", "https://example.com"])
+
+
+def test_os_sandbox_disable_environment_flag_fails_closed(tmp_path, monkeypatch):
+    from reelbrain.runtime_guard import RuntimeGuard
+
+    guard = RuntimeGuard(
+        workspace_root=tmp_path,
+        project_id="project-1",
+        creator_id="creator-1",
+        tool_names=("ffprobe",),
+    )
+    monkeypatch.setenv("REELBRAIN_DISABLE_OS_SANDBOX", "1")
+
+    with pytest.raises(PermissionError, match="os_sandbox_disable_denied"):
+        guard.run_tool(["ffprobe", "-version"])

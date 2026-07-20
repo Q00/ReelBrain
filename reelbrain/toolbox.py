@@ -227,7 +227,8 @@ class ToolboxManager:
     ) -> ToolRecord:
         destination.mkdir(parents=True, exist_ok=False)
         artifact_path = destination / "artifact"
-        shutil.copy2(source, artifact_path)
+        shutil.copyfile(source, artifact_path)
+        shutil.copymode(source, artifact_path)
         artifact_path.chmod(0o555 if os.access(source, os.X_OK) else 0o444)
         manifest_path = destination / "manifest.json"
         manifest_path.write_text(
@@ -280,4 +281,3 @@ class ToolboxManager:
         temporary = self.registry_path.with_suffix(".tmp")
         temporary.write_text(json.dumps(registry, indent=2, sort_keys=True), encoding="utf-8")
         os.replace(temporary, self.registry_path)
-

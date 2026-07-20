@@ -7,8 +7,9 @@ from hashlib import sha256
 import json
 import os
 from pathlib import Path
+import platform
+import resource
 import shutil
-import shlex
 import subprocess
 from typing import Iterable, Mapping
 
@@ -69,18 +70,10 @@ class RuntimeGuard:
             try:
                 toolbox_record = self.toolbox.resolve_active(name)
             except KeyError:
-                bootstrap = self.toolbox.root / ".bootstrap"
-                bootstrap.mkdir(parents=True, exist_ok=True)
-                wrapper = bootstrap / name
-                wrapper.write_text(
-                    f"#!/bin/sh\nexec {shlex.quote(str(system_path))} \"$@\"\n",
-                    encoding="utf-8",
-                )
-                wrapper.chmod(0o755)
                 unsigned = ToolManifest(
                     tool_id=name,
                     version="system-v1",
-                    digest=sha256_file(wrapper),
+                    digest=sha256_file(system_path),
                     origin="official",
                     entrypoint=str(system_path),
                     capabilities=("local:execute",),
@@ -88,7 +81,7 @@ class RuntimeGuard:
                 )
                 manifest = self._official_signer.sign(unsigned)
                 toolbox_record = self.toolbox.install_official(
-                    wrapper,
+                    system_path,
                     manifest,
                     signer=self._official_signer,
                     conformance=lambda path, _: path.is_file() and os.access(path, os.X_OK),
@@ -103,7 +96,7 @@ class RuntimeGuard:
             )
             tools.append(tool)
             self._tool_by_name[name] = tool
-            self._executable_by_name[name] = path
+            self._executable_by_name[name] = system_path
             grants.append(
                 ToolCapabilityGrant(
                     capability="local:execute",
@@ -175,13 +168,73 @@ class RuntimeGuard:
         if not decision.allowed:
             self.denial_logs.append(payload)
         decision.require_allowed()
+        if sha256_file(self._executable_by_name[name]) != tool.digest:
+            raise PermissionError("registered_system_tool_digest_changed")
         try:
             governed_command = [str(self._executable_by_name[name]), *command[1:]]
+            sandboxed_command = self._sandbox_command(governed_command)
+            sandbox_tmp = self.workspace_root / ".sandbox-tmp"
+            self.authorize_path(
+                sandbox_tmp, operation="write", data_class="sandbox_temporary"
+            )
+            sandbox_tmp.mkdir(parents=True, exist_ok=True)
+            environment = os.environ.copy()
+            environment.update({"HOME": str(self.workspace_root), "TMPDIR": str(sandbox_tmp)})
             return subprocess.run(
-                governed_command, check=True, capture_output=True, text=True
+                sandboxed_command,
+                check=True,
+                capture_output=True,
+                text=True,
+                preexec_fn=self._apply_resource_limits,
+                env=environment,
             )
         except subprocess.CalledProcessError as exc:
             raise RuntimeError(f"governed_tool_failed:{exc.stderr.strip()}") from exc
+
+    def _sandbox_command(self, governed_command: list[str]) -> list[str]:
+        if os.environ.get("REELBRAIN_DISABLE_OS_SANDBOX") == "1":
+            raise PermissionError("os_sandbox_disable_denied")
+        if platform.system() != "Darwin":
+            raise RuntimeError("certified_os_sandbox_unavailable")
+        sandbox_exec = Path("/usr/bin/sandbox-exec")
+        if not sandbox_exec.is_file():
+            raise RuntimeError("macos_sandbox_exec_unavailable")
+        write_roots = {self.workspace_root}
+        write_rules = " ".join(
+            f'(subpath {json.dumps(str(path.resolve(strict=False)))})'
+            for path in sorted(write_roots, key=str)
+        )
+        profile = " ".join(
+            (
+                "(version 1)",
+                "(deny default)",
+                "(allow process*)",
+                "(allow sysctl-read)",
+                "(allow mach-lookup)",
+                "(allow ipc-posix-shm)",
+                "(allow signal)",
+                "(allow file-read*)",
+                f"(allow file-write* {write_rules} (literal \"/dev/null\"))",
+                "(deny network*)",
+            )
+        )
+        return [str(sandbox_exec), "-p", profile, *governed_command]
+
+    @staticmethod
+    def _apply_resource_limits() -> None:
+        limits = (
+            (resource.RLIMIT_CPU, 3600),
+            (resource.RLIMIT_DATA, 4 * 1024**3),
+            (resource.RLIMIT_FSIZE, 20 * 1024**3),
+            (resource.RLIMIT_NOFILE, 256),
+        )
+        for resource_kind, soft_limit in limits:
+            try:
+                _, hard = resource.getrlimit(resource_kind)
+                effective = soft_limit if hard == resource.RLIM_INFINITY else min(soft_limit, hard)
+                resource.setrlimit(resource_kind, (effective, effective))
+            except (OSError, ValueError):
+                continue
 
     def run_callback_tool(
         self,
