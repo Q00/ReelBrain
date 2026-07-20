@@ -7,3 +7,4 @@ htmlcov/
 dist/
 build/
 *.egg-info/
+.ouroboros_eval_artifact.md
