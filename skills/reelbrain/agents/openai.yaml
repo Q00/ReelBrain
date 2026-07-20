@@ -1,0 +1,4 @@
+interface:
+  display_name: "ReelBrain"
+  short_description: "Create verified short and long video edits"
+  default_prompt: "Use $reelbrain to edit my local educational video with creator-controlled memory and approvals."

@@ -15,10 +15,15 @@ ReelBrain is a local-first AI video-editing agent team for solo educational crea
 ```bash
 uv sync --dev
 uv run reelbrain doctor
+uv run reelbrain setup
 uv run pytest -q
 ```
 
-`doctor` reports required dependencies and platform compatibility. It does not install packages, request secrets, or execute remote setup scripts.
+`doctor` reports required dependencies and platform compatibility. `setup` prints the complete local setup plan and waits for explicit approval. After reviewing it, run `uv run reelbrain setup --approve` to bootstrap the immutable toolbox and execute local FFmpeg/FFprobe conformance checks. Neither command installs packages, requests secrets, enables providers, or executes remote setup scripts. Missing dependencies are reported with proposed commands for the creator to approve separately.
+
+## skills.sh client
+
+The distributable thin-client skill is in [`skills/reelbrain`](skills/reelbrain). It can be published through a skills.sh-compatible registry, but installation grants no runtime permissions and does not install native or Python dependencies. The skill delegates editing, ACP governance, provider consent, memory, and release gates to the local ReelBrain runtime.
 
 ## Short-form dogfood
 

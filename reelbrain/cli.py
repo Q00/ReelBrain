@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import asdict
 import json
 from pathlib import Path
 import platform
@@ -12,6 +13,7 @@ import sys
 from .evidence import ReleaseEvidenceStore
 from .editing import LocalPackageBuilder, RightsEntry, TranscriptSegment
 from .release import CohortFeedback, FounderDogfoodRun, SemanticFixtureResult
+from .setup import SetupManager
 from .transcription import LocalWhisperSTT
 
 
@@ -35,6 +37,33 @@ def doctor() -> int:
     }
     print(json.dumps(payload, indent=2, sort_keys=True))
     return 0 if payload["certified_v1"] else 1
+
+
+def setup_runtime(args) -> int:
+    manager = SetupManager()
+    plan = manager.plan()
+    if not args.approve:
+        print(
+            json.dumps(
+                {"status": "approval_required", "plan": asdict(plan)},
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
+    try:
+        receipt = manager.apply(approved=True)
+    except RuntimeError as exc:
+        print(
+            json.dumps(
+                {"status": "incomplete", "reason": str(exc), "plan": asdict(plan)},
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 3
+    print(json.dumps({"status": "configured", "receipt": str(receipt)}, indent=2))
+    return 0
 
 
 def evidence_store(args) -> ReleaseEvidenceStore:
@@ -162,6 +191,14 @@ def build_parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
     doctor_parser = commands.add_parser("doctor")
     doctor_parser.set_defaults(func=lambda args: doctor())
+
+    setup_parser = commands.add_parser("setup")
+    setup_parser.add_argument(
+        "--approve",
+        action="store_true",
+        help="Approve toolbox bootstrap and local conformance; never installs missing packages.",
+    )
+    setup_parser.set_defaults(func=setup_runtime)
 
     short = commands.add_parser("short")
     short.add_argument("source", type=Path)
