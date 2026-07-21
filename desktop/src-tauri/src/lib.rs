@@ -780,11 +780,31 @@ fn workspace_root() -> PathBuf {
     if let Some(path) = env::var_os("REELBRAIN_PROJECT_ROOT") {
         return PathBuf::from(path);
     }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("."))
+    if cfg!(debug_assertions) {
+        return PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."));
+    }
+    dirs::home_dir()
+        .map(|home| home.join(".ReelBrain"))
+        .unwrap_or_else(|| PathBuf::from(".ReelBrain"))
+}
+
+fn python_module_root() -> PathBuf {
+    if let Some(path) = env::var_os("REELBRAIN_PYTHONPATH") {
+        return PathBuf::from(path);
+    }
+    if let Ok(executable) = env::current_exe() {
+        if let Some(contents) = executable.parent().and_then(Path::parent) {
+            let resources = contents.join("Resources");
+            if resources.join("reelbrain").is_dir() {
+                return resources;
+            }
+        }
+    }
+    workspace_root()
 }
 
 fn default_agent_profiles() -> AgentProfileState {
@@ -1561,16 +1581,28 @@ fn call_reelbrain_bridge(
     let object = payload
         .as_object_mut()
         .ok_or("ReelBrain bridge payload must be an object")?;
+    let workspace = workspace_root();
     object.insert(
         "workspace".into(),
-        Value::String(workspace_root().to_string_lossy().into_owned()),
+        Value::String(workspace.to_string_lossy().into_owned()),
     );
-    let mut child = Command::new(resolve_python_bin())
+    fs::create_dir_all(&workspace)
+        .map_err(|error| format!("Unable to create ReelBrain data directory: {error}"))?;
+    let mut python_paths = vec![python_module_root()];
+    if let Some(existing) = env::var_os("PYTHONPATH") {
+        python_paths.extend(env::split_paths(&existing));
+    }
+    let mut process = Command::new(resolve_python_bin());
+    process
         .args(["-m", "reelbrain.desktop_bridge", command])
-        .current_dir(workspace_root())
+        .current_dir(&workspace)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Ok(python_path) = env::join_paths(python_paths) {
+        process.env("PYTHONPATH", python_path);
+    }
+    let mut child = process
         .spawn()
         .map_err(|error| format!("Unable to start ReelBrain local service: {error}"))?;
     if let Some(mut stdin) = child.stdin.take() {
