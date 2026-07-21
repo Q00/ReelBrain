@@ -1,0 +1,18 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="512" height="512" rx="124" fill="#0B0C10"/>
+  <circle cx="178" cy="156" r="76" fill="#A855F7"/>
+  <circle cx="337" cy="150" r="68" fill="#EF5D8D"/>
+  <circle cx="159" cy="339" r="70" fill="#5B7CFF"/>
+  <circle cx="347" cy="344" r="64" fill="#EF765F"/>
+  <circle cx="258" cy="254" r="130" fill="url(#brain)"/>
+  <path d="M258 139C207 139 171 178 171 226C171 250 181 271 197 286C187 303 186 326 198 345C216 372 252 380 278 361C295 374 320 376 340 362C369 343 375 304 352 278C362 261 367 241 364 220C358 172 315 137 258 139Z" stroke="white" stroke-opacity="0.82" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M258 155V355M196 220C223 220 242 238 258 258M325 203C293 203 273 224 258 247M201 306C227 306 246 292 258 276M324 315C296 315 275 298 258 281" stroke="white" stroke-opacity="0.86" stroke-width="18" stroke-linecap="round"/>
+  <defs>
+    <linearGradient id="brain" x1="170" y1="143" x2="359" y2="365" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7C3AED"/>
+      <stop offset="0.45" stop-color="#8B5CF6"/>
+      <stop offset="0.72" stop-color="#E052A0"/>
+      <stop offset="1" stop-color="#EF765F"/>
+    </linearGradient>
+  </defs>
+</svg>

@@ -9,3 +9,10 @@ build/
 *.egg-info/
 .ouroboros_eval_artifact.md
 .reelbrain/
+.env
+.env.*
+!.env.example
+desktop/node_modules/
+desktop/dist/
+desktop/src-tauri/target/
+.review-lock-fix.*/
