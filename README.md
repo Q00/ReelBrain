@@ -43,7 +43,18 @@ The Taste Profile is a behavioral prior, not evidence. A Like becomes an explici
 
 ## Quick start and judge testing
 
-For the fastest start on Apple Silicon, download the [latest GitHub release](https://github.com/Q00/ReelBrain/releases/latest). Use the PKG as the installer, or download the ZIP for the portable `ReelBrain.app` runner. The installed app includes ReelBrain’s Python modules and stores local state in `~/.ReelBrain`; Python, FFmpeg/FFprobe, and Codex or ChatGPT remain host prerequisites. The current app bundle is ad-hoc signed but the installer is not Developer ID signed or notarized, so macOS may require Control-clicking the package or app and choosing **Open** on first launch.
+For the fastest start on Apple Silicon, download the [latest GitHub release](https://github.com/Q00/ReelBrain/releases/latest). Use the PKG as the installer, or download the ZIP for the portable `ReelBrain.app` runner. The installed app includes ReelBrain’s Python modules and stores local state in `~/.ReelBrain`; Python, FFmpeg/FFprobe, and Codex or ChatGPT remain host prerequisites.
+
+If macOS says it cannot verify that the unsigned PKG is free of malware:
+
+1. Click **Done** on the warning. Do not move the installer to Trash.
+2. Open **System Settings → Privacy & Security**.
+3. Scroll to **Security** and find the message saying ReelBrain was blocked.
+4. Click **Open Anyway**.
+5. Authenticate with Touch ID or the Mac password, then confirm **Open**.
+6. Complete the normal macOS Installer steps.
+
+Only bypass this warning for a package downloaded from the official ReelBrain GitHub release. The current app bundle is ad-hoc signed, but the PKG is not Developer ID signed or Apple-notarized.
 
 Prerequisites: macOS on Apple Silicon, Python 3.11+, Node.js, FFmpeg, FFprobe, `uv`, and the Tauri development prerequisites.
 
