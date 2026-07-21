@@ -43,6 +43,8 @@ The Taste Profile is a behavioral prior, not evidence. A Like becomes an explici
 
 ## Quick start and judge testing
 
+For the fastest start on Apple Silicon, download the [latest GitHub release](https://github.com/Q00/ReelBrain/releases/latest). Use the DMG as the installer, or download the ZIP for the portable `ReelBrain.app` runner. The current build is ad-hoc signed and not notarized, so macOS may require Control-clicking the app and choosing **Open** on first launch.
+
 Prerequisites: macOS on Apple Silicon, Python 3.11+, Node.js, FFmpeg, FFprobe, `uv`, and the Tauri development prerequisites.
 
 ```bash
@@ -114,40 +116,9 @@ During development, Ouroboros and Codex fanned out bounded questions to independ
 
 The same pattern became ReelBrain’s product architecture. A creator request enters the Showrunner, ReelBrain freezes the source catalog, Taste Profile snapshot, workflow epoch, and capability grants, and Codex runs four isolated editorial lanes. Their results are treated as proposals—not authority—until ReelBrain validates their candidate references and the creator approves the effect.
 
-```mermaid
-flowchart TD
-    I["Ouroboros PM interview"] --> S["Validated ReelBrain Seed"]
-    S --> X["Codex + GPT-5.6 implementation"]
-    X --> D["Independent development subagents"]
-    D --> DC["Code context"]
-    D --> DV["Contrarian review"]
-    D --> DS["Workflow simplification"]
-    D --> DA["Architecture implications"]
-    D --> DG["Acceptance guard"]
-    DC --> Q["Root synthesis, execution, and evaluation"]
-    DV --> Q
-    DS --> Q
-    DA --> Q
-    DG --> Q
-    Q --> U["Creator request in ReelBrain"]
-    U --> H["Codex root / Showrunner"]
-    H --> P["ReelBrain plan_fanout"]
-    P --> G["Grounded catalog + taste snapshot + capability grants"]
-    G --> A1["Story Editor"]
-    G --> A2["Retention Editor"]
-    G --> A3["Style Editor"]
-    G --> A4["Continuity Editor"]
-    A1 --> Y["Showrunner synthesis"]
-    A2 --> Y
-    A3 --> Y
-    A4 --> Y
-    Y --> V["ReelBrain evidence and validation gates"]
-    V --> C["Creator Yes / No approval"]
-    C --> R["Versioned local render"]
-    R --> F["Like / Dislike / Skip"]
-    F --> M["Inspectable behavioral-prior memory"]
-    M --> P
-```
+![ReelBrain development and governed subagent fan-out](docs/assets/reelbrain-development-flow.png)
+
+The editable [Mermaid source](docs/assets/reelbrain-development-flow.mmd) is kept beside the exported diagram.
 
 Codex owns ephemeral execution: spawning lanes, concurrency, retries, and synthesis. ReelBrain owns durable trust: what source was frozen, what each agent was allowed to access, what was attempted, which proposal was accepted, what was rendered, and what the creator chose to remember. Taste is supplied to later agents as a scoped behavioral prior; it never replaces transcript or media evidence.
 

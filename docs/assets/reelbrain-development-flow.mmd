@@ -1,0 +1,35 @@
+flowchart TD
+    Interview["Ouroboros PM interview"] --> Seed["Validated ReelBrain Seed"]
+    Seed --> Root["Codex and GPT-5.6 root agent"]
+    Root --> DevFanout["Bounded development fan-out"]
+
+    DevFanout --> Context["Code context"]
+    DevFanout --> Contrarian["Contrarian review"]
+    DevFanout --> Simplifier["Workflow simplification"]
+    DevFanout --> Architecture["Architecture implications"]
+    DevFanout --> Guard["Acceptance guard"]
+
+    Context --> DevSynthesis["Root synthesis, implementation, and evaluation"]
+    Contrarian --> DevSynthesis
+    Simplifier --> DevSynthesis
+    Architecture --> DevSynthesis
+    Guard --> DevSynthesis
+
+    DevSynthesis --> Showrunner["Creator request enters the Showrunner"]
+    Showrunner --> Freeze["Freeze source, taste, epoch, and capability grants"]
+
+    Freeze --> Story["Story Editor"]
+    Freeze --> Retention["Retention Editor"]
+    Freeze --> Style["Style Editor"]
+    Freeze --> Continuity["Continuity Editor"]
+
+    Story --> ProductSynthesis["Showrunner synthesis and ReelBrain validation"]
+    Retention --> ProductSynthesis
+    Style --> ProductSynthesis
+    Continuity --> ProductSynthesis
+
+    ProductSynthesis --> Approval["Creator Yes or No approval"]
+    Approval --> Render["Versioned local render"]
+    Render --> Feedback["Like, Dislike, or Skip"]
+    Feedback --> Memory["Inspectable behavioral-prior memory"]
+    Memory -.-> Freeze
