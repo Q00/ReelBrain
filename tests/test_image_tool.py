@@ -68,13 +68,20 @@ def test_gpt_image_2_requires_consent_and_writes_image_plus_provenance(tmp_path)
         provider_consent_receipt=consent(),
         budget_reservation_receipt=budget(),
         secret_resolver=lambda ref: "test-api-key",
-        creator_approval_receipt="creator-approved-thumbnail-1",
+        secret_ref="dotenv://ReelBrain/openai",
+        secret_store_id="dogfood-dotenv",
+        secret_store_kind="local_dotenv_ephemeral",
+        secret_store_source="project-owned .env",
+        generation_authorization_receipt="creator-authorized-thumbnail-generation-1",
     )
 
     assert artifact.image_path.read_bytes() == PNG
     provenance = json.loads(artifact.provenance_path.read_text())
     assert provenance["model"] == "gpt-image-2"
     assert provenance["synthetic_media_review_required"] is True
+    assert provenance["secret_ref"] == "dotenv://ReelBrain/openai"
+    assert provenance["provider_invocation_id"] == "image-call-1"
+    assert provenance["image_sha256"]
     assert transport.calls[0][1]["model"] == "gpt-image-2"
     assert "test-api-key" not in json.dumps(guard.capability_receipts)
     assert "test-api-key" not in artifact.provenance_path.read_text()
@@ -100,7 +107,7 @@ def test_gpt_image_2_denies_missing_provider_consent_before_secret_resolution(tm
             provider_consent_receipt={},
             budget_reservation_receipt=budget(),
             secret_resolver=lambda ref: secret_calls.append(ref) or "secret",
-            creator_approval_receipt="approved",
+            generation_authorization_receipt="authorized",
         )
 
     assert secret_calls == []
@@ -115,7 +122,7 @@ def test_gpt_image_2_requires_creator_approval(tmp_path):
         tool_names=(),
     )
 
-    with pytest.raises(ValueError, match="creator_image_approval_required"):
+    with pytest.raises(ValueError, match="creator_image_generation_authorization_required"):
         GPTImage2Tool(FixtureTransport()).generate_thumbnail(
             prompt="thumbnail",
             output_path=tmp_path / "thumbnail.png",
@@ -123,5 +130,5 @@ def test_gpt_image_2_requires_creator_approval(tmp_path):
             provider_consent_receipt=consent(),
             budget_reservation_receipt=budget(),
             secret_resolver=lambda ref: "secret",
-            creator_approval_receipt="",
+            generation_authorization_receipt="",
         )

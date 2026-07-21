@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import asdict
+from decimal import Decimal, InvalidOperation
+import importlib.util
 import json
 from pathlib import Path
 import platform
@@ -11,8 +13,15 @@ import shutil
 import sys
 
 from .evidence import ReleaseEvidenceStore
-from .editing import LocalPackageBuilder, RightsEntry, TranscriptSegment
+from .dogfood import (
+    DogfoodRunConfig,
+    FounderDogfoodRunner,
+    discover_video_sources,
+    prepare_dogfood_run,
+)
+from .editing import LocalPackageBuilder, MediaError, RightsEntry, TranscriptSegment
 from .planning import LongFormPlanBuilder
+from .provider_plan import approve_provider_authorization_plan
 from .setup import SetupManager
 from .transcription import LocalWhisperSTT, SubtitleFileSTT
 
@@ -27,13 +36,22 @@ def doctor() -> int:
         "ffmpeg": shutil.which("ffmpeg") is not None,
         "ffprobe": shutil.which("ffprobe") is not None,
         "whisper_optional": shutil.which("whisper") is not None,
+        "pillow_dogfood_required": importlib.util.find_spec("PIL") is not None,
     }
     payload = {
-        "certified_v1": checks["platform"] and checks["ffmpeg"] and checks["ffprobe"],
+        "certified_v1": (
+            checks["platform"]
+            and checks["ffmpeg"]
+            and checks["ffprobe"]
+            and checks["pillow_dogfood_required"]
+        ),
         "checks": checks,
         "platform": platform.platform(),
         "python": sys.version.split()[0],
-        "note": "Whisper is optional at doctor time and required only for LocalWhisperSTT runs.",
+        "note": (
+            "Whisper is optional at doctor time and required only for LocalWhisperSTT "
+            "runs. Pillow is required for exact multilingual dogfood text overlays."
+        ),
     }
     print(json.dumps(payload, indent=2, sort_keys=True))
     return 0 if payload["certified_v1"] else 1
@@ -228,6 +246,130 @@ def boolean_flags(parser: argparse.ArgumentParser, name: str, *, default: bool =
     parser.add_argument(f"--{name}", action=argparse.BooleanOptionalAction, default=default)
 
 
+def dogfood_prepare(args) -> int:
+    artifacts = prepare_dogfood_run(
+        input_path=args.input,
+        config=DogfoodRunConfig(
+            project_id=args.project_id,
+            creator_id=args.creator_id,
+            output_root=args.output,
+            shorts_per_source=args.shorts,
+            minimum_long_seconds=args.minimum_long_minutes * 60,
+            maximum_long_seconds=args.maximum_long_minutes * 60,
+            rights_license=args.rights_license,
+        ),
+    )
+    print(
+        json.dumps(
+            {
+                "status": "AWAITING_PROVIDER_APPROVAL",
+                "artifacts": {name: str(path) for name, path in artifacts.items()},
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
+def _usd_to_cents(value: str) -> int:
+    try:
+        amount = Decimal(value)
+    except InvalidOperation as exc:
+        raise ValueError("invalid_usd_amount") from exc
+    cents = amount * 100
+    if amount < 0 or cents != cents.to_integral_value():
+        raise ValueError("usd_amount_requires_exact_cents")
+    return int(cents)
+
+
+def dogfood_approve_provider(args) -> int:
+    approved = approve_provider_authorization_plan(
+        args.plan,
+        approval_receipt_id=args.receipt,
+        approved_hard_cap_cents=_usd_to_cents(args.cap_usd),
+    )
+    print(
+        json.dumps(
+            {
+                "status": approved.status,
+                "plan": str(args.plan.expanduser().resolve()),
+                "hard_cap_cents": approved.hard_cap_cents,
+                "approval_receipt_id": approved.approval_receipt_id,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
+def dogfood_run(args) -> int:
+    config = DogfoodRunConfig(
+        project_id=args.project_id,
+        creator_id=args.creator_id,
+        output_root=args.output,
+        shorts_per_source=args.shorts,
+        minimum_long_seconds=args.minimum_long_minutes * 60,
+        maximum_long_seconds=args.maximum_long_minutes * 60,
+        rights_license=args.rights_license,
+    )
+    sources = discover_video_sources(args.input, args.output / "input")
+    try:
+        artifacts = FounderDogfoodRunner().run(
+            sources=sources,
+            config=config,
+            provider_plan_path=args.provider_plan,
+            env_file=args.env_file,
+            image_approval_receipt=args.image_approval_receipt,
+        )
+    except (PermissionError, ValueError, MediaError, RuntimeError) as exc:
+        reason = str(exc).replace("\n", " ")[:500]
+        failure_status = (
+            "BLOCKED"
+            if isinstance(exc, (PermissionError, ValueError, MediaError))
+            else "FAILED_RETRYABLE"
+        )
+        failure_path = args.output.expanduser().resolve() / "failure.json"
+        failure_path.parent.mkdir(parents=True, exist_ok=True)
+        failure_path.write_text(
+            json.dumps(
+                {
+                    "status": failure_status,
+                    "reason": reason,
+                    "provider_plan": str(args.provider_plan.expanduser().resolve()),
+                },
+                indent=2,
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+        print(
+            json.dumps(
+                {
+                    "status": failure_status,
+                    "reason": reason,
+                    "provider_plan": str(args.provider_plan.expanduser().resolve()),
+                    "failure_artifact": str(failure_path),
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 3
+    print(
+        json.dumps(
+            {
+                "status": "CREATOR_REVIEW",
+                "artifacts": {name: str(path) for name, path in artifacts.items()},
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="reelbrain")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -284,6 +426,45 @@ def build_parser() -> argparse.ArgumentParser:
     long.add_argument("--corrected-transcript", type=Path, required=True)
     long.add_argument("--cost-receipt", type=Path)
     long.set_defaults(func=build_long)
+
+    dogfood = commands.add_parser("dogfood")
+    dogfood_commands = dogfood.add_subparsers(dest="dogfood_command", required=True)
+
+    dogfood_prepare_parser = dogfood_commands.add_parser("prepare")
+    dogfood_prepare_parser.add_argument("input", type=Path)
+    dogfood_prepare_parser.add_argument("--output", type=Path, required=True)
+    dogfood_prepare_parser.add_argument("--project-id", required=True)
+    dogfood_prepare_parser.add_argument("--creator-id", required=True)
+    dogfood_prepare_parser.add_argument("--rights-license", default="creator-owned")
+    dogfood_prepare_parser.add_argument("--shorts", type=int, default=3)
+    dogfood_prepare_parser.add_argument("--minimum-long-minutes", type=float, default=10)
+    dogfood_prepare_parser.add_argument("--maximum-long-minutes", type=float, default=15)
+    dogfood_prepare_parser.set_defaults(func=dogfood_prepare)
+
+    dogfood_approve = dogfood_commands.add_parser("approve-provider")
+    dogfood_approve.add_argument("plan", type=Path)
+    dogfood_approve.add_argument("--receipt", required=True)
+    dogfood_approve.add_argument("--cap-usd", required=True)
+    dogfood_approve.set_defaults(func=dogfood_approve_provider)
+
+    dogfood_run_parser = dogfood_commands.add_parser("run")
+    dogfood_run_parser.add_argument("input", type=Path)
+    dogfood_run_parser.add_argument("--output", type=Path, required=True)
+    dogfood_run_parser.add_argument("--project-id", required=True)
+    dogfood_run_parser.add_argument("--creator-id", required=True)
+    dogfood_run_parser.add_argument("--rights-license", default="creator-owned")
+    dogfood_run_parser.add_argument("--shorts", type=int, default=3)
+    dogfood_run_parser.add_argument("--minimum-long-minutes", type=float, default=10)
+    dogfood_run_parser.add_argument("--maximum-long-minutes", type=float, default=15)
+    dogfood_run_parser.add_argument("--provider-plan", type=Path, required=True)
+    dogfood_run_parser.add_argument("--env-file", type=Path, required=True)
+    dogfood_run_parser.add_argument(
+        "--image-generation-authorization-receipt",
+        "--image-approval-receipt",
+        dest="image_approval_receipt",
+        required=True,
+    )
+    dogfood_run_parser.set_defaults(func=dogfood_run)
 
     release = commands.add_parser("release")
     release_commands = release.add_subparsers(dest="release_command", required=True)

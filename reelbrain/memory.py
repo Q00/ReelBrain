@@ -30,6 +30,13 @@ class DeletionFenceRegistry:
     def contains(self, creator_id: str, preference_id: str) -> bool:
         return (creator_id, preference_id) in self._fences
 
+    def snapshot(self, creator_id: str) -> tuple[str, ...]:
+        """Return content-free fence identifiers for durable persistence."""
+
+        return tuple(
+            sorted(subject_id for owner, subject_id in self._fences if owner == creator_id)
+        )
+
 
 GLOBAL_DELETION_FENCES = DeletionFenceRegistry()
 
@@ -158,12 +165,16 @@ class PreferenceStore:
         scope: PreferenceScope,
         remember: bool = False,
     ) -> FeedbackEvent:
+        normalized_category = category.strip()
+        normalized_value = value.strip()
+        if not normalized_category or not normalized_value:
+            raise ValueError("preference_category_and_value_required")
         event = FeedbackEvent(
             event_id=f"feedback_{uuid4().hex}",
             creator_id=creator_id,
             project_id=project_id,
-            category=category.strip(),
-            value=value.strip(),
+            category=normalized_category,
+            value=normalized_value,
             scope=scope,
             kind="remember" if remember else "episode",
         )
@@ -273,9 +284,12 @@ class PreferenceStore:
         scope: PreferenceScope | None = None,
     ) -> Preference:
         current = self._require_active_or_disabled(preference_id)
+        normalized_value = None if value is None else value.strip()
+        if normalized_value == "":
+            raise ValueError("preference_value_required")
         updated = replace(
             current,
-            value=current.value if value is None else value.strip(),
+            value=current.value if normalized_value is None else normalized_value,
             scope=current.scope if scope is None else scope,
             version=current.version + 1,
             updated_at=utc_now(),
@@ -378,6 +392,82 @@ class PreferenceStore:
             {"version": 1, "preferences": preferences, "deletion_tombstones": tombstones},
             sort_keys=True,
         )
+
+    def to_document(self, creator_id: str) -> dict[str, object]:
+        """Serialize the complete creator-scoped memory state.
+
+        Unlike ``export_json``, this representation includes episode feedback so
+        preference proposals can survive a desktop restart. It remains local
+        runtime state and is not intended as a portable cross-creator export.
+        """
+
+        return {
+            "version": 1,
+            "creator_id": creator_id,
+            "events": [
+                {**asdict(event), "scope": asdict(event.scope)}
+                for event in self._events
+                if event.creator_id == creator_id
+            ],
+            "preferences": [
+                {**asdict(preference), "scope": asdict(preference.scope)}
+                for preference in self.inspect(creator_id, include_disabled=True)
+            ],
+            "deletion_tombstones": [
+                asdict(tombstone)
+                for tombstone in self._tombstones.values()
+                if tombstone.creator_id == creator_id
+            ],
+            "deletion_fences": list(self._deletion_fences.snapshot(creator_id)),
+        }
+
+    @classmethod
+    def from_document(
+        cls,
+        creator_id: str,
+        document: dict[str, object],
+        *,
+        deletion_fences: DeletionFenceRegistry | None = None,
+    ) -> PreferenceStore:
+        """Restore a creator-scoped store while enforcing deletion fences."""
+
+        if document.get("version") != 1:
+            raise ValueError("unsupported_preference_document_version")
+        if document.get("creator_id") != creator_id:
+            raise ValueError("cross_creator_preference_import_denied")
+        store = cls(deletion_fences=deletion_fences)
+        for raw in document.get("deletion_tombstones", []):
+            if not isinstance(raw, dict) or raw.get("creator_id") != creator_id:
+                raise ValueError("cross_creator_preference_import_denied")
+            tombstone = PreferenceTombstone(**raw)
+            store._tombstones[tombstone.preference_id] = tombstone
+            store._deletion_fences.add(creator_id, tombstone.preference_id)
+            for event_id in tombstone.provenance_event_ids:
+                store._deletion_fences.add(creator_id, event_id)
+        for subject_id in document.get("deletion_fences", []):
+            if not isinstance(subject_id, str) or not subject_id.strip():
+                raise ValueError("invalid_deletion_fence")
+            store._deletion_fences.add(creator_id, subject_id)
+        for raw in document.get("events", []):
+            if not isinstance(raw, dict) or raw.get("creator_id") != creator_id:
+                raise ValueError("cross_creator_preference_import_denied")
+            payload = dict(raw)
+            scope = PreferenceScope(**payload.pop("scope"))
+            event = FeedbackEvent(scope=scope, **payload)
+            if not store._deletion_fences.contains(creator_id, event.event_id):
+                store._events.append(event)
+        for raw in document.get("preferences", []):
+            if not isinstance(raw, dict) or raw.get("creator_id") != creator_id:
+                raise ValueError("cross_creator_preference_import_denied")
+            payload = dict(raw)
+            scope = PreferenceScope(**payload.pop("scope"))
+            preference = Preference(scope=scope, **payload)
+            if preference.preference_id in store._tombstones or store._deletion_fences.contains(
+                creator_id, preference.preference_id
+            ):
+                raise ValueError("deleted_preference_resurrection_denied")
+            store._preferences[preference.preference_id] = preference
+        return store
 
     def import_json(self, creator_id: str, payload: str) -> tuple[Preference, ...]:
         document = json.loads(payload)

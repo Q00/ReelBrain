@@ -18,7 +18,7 @@ class CandidateAssessment:
 
 
 class MeaningScout:
-    name = "Meaning Scout"
+    name = "Story Editor"
 
     def assess(self, segment: TranscriptSegment) -> CandidateAssessment:
         score = 0.45 * segment.educational_value + 0.35 * segment.confidence
@@ -34,7 +34,7 @@ class MeaningScout:
 
 
 class HookScout:
-    name = "Hook Scout"
+    name = "Retention Editor"
 
     def assess(self, segment: TranscriptSegment) -> CandidateAssessment:
         hook_signal = min(len(segment.hook.split()) / 12, 1.0)
@@ -48,7 +48,7 @@ class HookScout:
 
 
 class CreatorAdvocate:
-    name = "Creator Advocate"
+    name = "Style Editor"
 
     def __init__(self, preferred_terms: Iterable[str] = ()) -> None:
         self.preferred_terms = tuple(term.lower() for term in preferred_terms)
@@ -66,7 +66,7 @@ class CreatorAdvocate:
 
 
 class ContextGuardian:
-    name = "Context Guardian"
+    name = "Continuity Editor"
 
     def assess(self, segment: TranscriptSegment) -> CandidateAssessment:
         risks = list(segment.risks)
@@ -148,4 +148,3 @@ class HighlightAgentTeam:
             for persona in self.personas
         )
         return self.showrunner.synthesize(candidates, assessments, count=count), assessments
-

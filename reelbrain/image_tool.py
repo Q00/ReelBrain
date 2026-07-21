@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 from dataclasses import dataclass
+from hashlib import sha256
 import json
 from pathlib import Path
 from typing import Callable, Protocol
@@ -93,12 +94,15 @@ class GPTImage2Tool:
         budget_reservation_receipt: dict[str, object],
         secret_resolver: Callable[[str], str],
         secret_ref: str = "keychain://ReelBrain/openai",
-        creator_approval_receipt: str,
+        secret_store_id: str = "reelbrain-keychain",
+        secret_store_kind: str = "macos_keychain",
+        secret_store_source: str = "ReelBrain/openai",
+        generation_authorization_receipt: str,
         size: str = "1536x1024",
         quality: str = "high",
     ) -> GeneratedImageArtifact:
-        if not creator_approval_receipt.strip():
-            raise ValueError("creator_image_approval_required")
+        if not generation_authorization_receipt.strip():
+            raise ValueError("creator_image_generation_authorization_required")
         if not prompt.strip():
             raise ValueError("image_prompt_required")
         destination = Path(output_path).expanduser().resolve()
@@ -126,10 +130,22 @@ class GPTImage2Tool:
             destination_host="api.openai.com",
             budget_reservation_receipt=budget_reservation_receipt,
             secret_ref=secret_ref,
-            secret_store_id="reelbrain-keychain",
-            secret_store_kind="macos_keychain",
-            secret_store_source="ReelBrain/openai",
+            secret_store_id=secret_store_id,
+            secret_store_kind=secret_store_kind,
+            secret_store_source=secret_store_source,
             secret_resolver=secret_resolver,
+            tool_description=(
+                "Generate one creator-authorized GPT Image 2 thumbnail background "
+                "from a grounded hook prompt; publishing and acceptance remain separate."
+            ),
+            input_schema={
+                "type": "object",
+                "required": ["prompt", "size", "quality"],
+            },
+            data_effects=(
+                "sends thumbnail prompt context to api.openai.com",
+                "writes a generated image and provenance record locally",
+            ),
         )
         data = response.get("data", [])
         if not data or not data[0].get("b64_json"):
@@ -144,10 +160,18 @@ class GPTImage2Tool:
                     "provider": "openai",
                     "model": "gpt-image-2",
                     "prompt": prompt,
+                    "prompt_sha256": sha256(prompt.encode("utf-8")).hexdigest(),
                     "size": size,
                     "quality": quality,
-                    "creator_approval_receipt": creator_approval_receipt,
+                    "generation_authorization_receipt": generation_authorization_receipt,
                     "secret_ref": secret_ref,
+                    "provider_invocation_id": provider_consent_receipt.get(
+                        "invocation_id"
+                    ),
+                    "budget_reservation_id": budget_reservation_receipt.get(
+                        "reservation_id"
+                    ),
+                    "image_sha256": sha256(destination.read_bytes()).hexdigest(),
                     "synthetic_media_review_required": True,
                 },
                 indent=2,

@@ -2801,6 +2801,8 @@ def test_toolbox_checks_equivalent_capability_before_new_tool_and_revokes_atomic
 
 
 def test_external_stt_callback_requires_disclosed_provider_consent_before_dispatch(tmp_path):
+    import json
+
     from reelbrain.runtime_guard import RuntimeGuard
 
     guard = RuntimeGuard(
@@ -2877,6 +2879,11 @@ def test_external_stt_callback_requires_disclosed_provider_consent_before_dispat
     assert guard.provider_receipts[0]["purpose"] == "transcription"
     assert [row["state"] for row in guard.budget_ledger] == ["reserved", "consumed"]
     assert guard.approval_records[0]["kind"] == "provider_consent"
+    artifacts = guard.write_audit_artifacts(tmp_path / "audit")
+    registry = json.loads(artifacts["acp_registry"].read_text())
+    manifests = json.loads(artifacts["toolbox_manifests"].read_text())
+    assert {row["tool_id"] for row in registry} == {"cloud-stt"}
+    assert {row["tool_id"] for row in manifests} == {"cloud-stt"}
 
 
 def test_os_sandbox_denies_network_even_for_registered_tool(tmp_path):
@@ -2938,6 +2945,28 @@ def test_runtime_executes_immutable_toolbox_artifact(monkeypatch, tmp_path):
     guard.run_tool(["ffprobe", "-version"])
 
     assert captured[0][0] == str(guard.toolbox.resolve_active("ffprobe").artifact_path)
+
+
+def test_runtime_guard_normalizes_identity_fields_before_binding_session(
+    monkeypatch, tmp_path
+):
+    from reelbrain.runtime_guard import RuntimeGuard
+
+    guard = RuntimeGuard(
+        workspace_root=tmp_path,
+        project_id="project-1 ",
+        creator_id=" creator-1",
+        agent_id="showrunner ",
+        tool_names=("ffprobe",),
+    )
+    monkeypatch.setattr(guard, "_sandbox_command", lambda command: ["/usr/bin/true"])
+
+    guard.run_tool(["ffprobe", "-version"])
+
+    assert guard.project_id == "project-1"
+    assert guard.creator_id == "creator-1"
+    assert guard.agent_id == "showrunner"
+    assert guard.session_id == "runtime:project-1"
 
 
 def test_os_sandbox_disable_environment_flag_fails_closed(tmp_path, monkeypatch):

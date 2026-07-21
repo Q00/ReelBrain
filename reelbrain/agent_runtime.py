@@ -16,6 +16,9 @@ AgentName = Literal[
     "creator-advocate",
     "context-guardian",
     "showrunner",
+    "assembler",
+    "thumbnail-designer",
+    "verifier",
     "toolsmith",
     "tool-auditor",
     "sleep",
@@ -27,6 +30,9 @@ AGENTS: tuple[AgentName, ...] = (
     "creator-advocate",
     "context-guardian",
     "showrunner",
+    "assembler",
+    "thumbnail-designer",
+    "verifier",
     "toolsmith",
     "tool-auditor",
     "sleep",
@@ -200,4 +206,3 @@ class AgentTeamRuntime:
             return self.tool_requests[request_id]
         except KeyError as exc:
             raise KeyError("tool_request_not_found") from exc
-

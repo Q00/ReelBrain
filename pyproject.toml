@@ -3,13 +3,21 @@ name = "reelbrain"
 version = "0.1.0"
 description = "Local-first ReelBrain runtime primitives"
 requires-python = ">=3.11"
+dependencies = ["pillow>=12.2,<13"]
 
 [build-system]
 requires = ["setuptools>=75"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools.packages.find]
+include = ["reelbrain*"]
+
 [project.scripts]
 reelbrain = "reelbrain.cli:main"
+reelbrain-mcp = "reelbrain.mcp_server:main"
+
+[project.optional-dependencies]
+mcp = ["mcp>=1,<2"]
 
 [dependency-groups]
 dev = ["pytest>=8.3"]

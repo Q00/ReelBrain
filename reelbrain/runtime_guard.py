@@ -55,11 +55,13 @@ class RuntimeGuard:
         toolbox: ToolboxManager | None = None,
     ) -> None:
         self.workspace_root = Path(workspace_root).expanduser().resolve(strict=False)
-        self.project_id = project_id
-        self.creator_id = creator_id
-        self.agent_id = agent_id
+        self.project_id = project_id.strip()
+        self.creator_id = creator_id.strip()
+        self.agent_id = agent_id.strip()
+        if not self.project_id or not self.creator_id or not self.agent_id:
+            raise ValueError("runtime_identity_fields_required")
         self.requester_id = "reelbrain-runtime"
-        self.session_id = f"runtime:{project_id}"
+        self.session_id = f"runtime:{self.project_id}"
         self.toolbox = toolbox or ToolboxManager()
         tools: list[ACPToolIdentity] = []
         grants: list[ToolCapabilityGrant] = []
@@ -108,11 +110,14 @@ class RuntimeGuard:
                     tool_id=name,
                     requester_id=self.requester_id,
                     session_id=self.session_id,
-                    project_id=project_id,
-                    creator_id=creator_id,
+                    project_id=self.project_id,
+                    creator_id=self.creator_id,
                 )
             )
         self.registry = ACPRegistrySnapshot(tools)
+        self._executed_tools: dict[str, ACPToolIdentity] = {
+            tool.tool_id: tool for tool in tools
+        }
         self.broker = CapabilityBroker(
             workspace_root=self.workspace_root,
             local_allowlist=local_allowlist,
@@ -120,9 +125,9 @@ class RuntimeGuard:
                 ToolExecutionSession(
                     session_id=self.session_id,
                     requester_id=self.requester_id,
-                    agent_id=agent_id,
-                    project_id=project_id,
-                    creator_id=creator_id,
+                    agent_id=self.agent_id,
+                    project_id=self.project_id,
+                    creator_id=self.creator_id,
                 ),
             ),
             tool_capability_grants=grants,
@@ -297,12 +302,76 @@ class RuntimeGuard:
         secret_store_kind: str | None = None,
         secret_store_source: str | None = None,
         secret_resolver=None,
+        failure_budget_state: str = "released_after_failure",
+        tool_description: str | None = None,
+        input_schema: Mapping[str, object] | None = None,
+        data_effects: Iterable[str] = (),
+        implementation_dependencies: Iterable[str] = (),
     ):
         """Authorize in-process agent/provider adapters through ACP before dispatch."""
 
         try:
             record = self.toolbox.resolve_active(tool_id)
         except KeyError:
+            record = None
+        if not official and record is None:
+            denial = {
+                "allowed": False,
+                "reason": "callback_tool_not_approved",
+                "tool_id": tool_id,
+                "capability": capability,
+            }
+            self.denial_logs.append(denial)
+            raise PermissionError("callback_tool_not_approved")
+        if official:
+            descriptor_document = {
+                "tool_id": tool_id,
+                "kind": "in_process_adapter",
+                "capability": capability,
+                "description": tool_description or "",
+                "input_schema": dict(input_schema or {}),
+                "data_effects": list(data_effects),
+                "implementation_dependencies": list(implementation_dependencies),
+                "provider": provider,
+                "destination_host": destination_host,
+            }
+            descriptor_text = json.dumps(descriptor_document, sort_keys=True)
+            needs_install = record is None
+            if record is not None:
+                if record.manifest.origin != "official":
+                    raise PermissionError("official_callback_tool_id_collision")
+                try:
+                    needs_install = (
+                        record.artifact_path.read_text(encoding="utf-8")
+                        != descriptor_text
+                        or capability not in record.manifest.capabilities
+                    )
+                except OSError:
+                    needs_install = True
+            if needs_install:
+                bootstrap = self.toolbox.root / ".bootstrap"
+                bootstrap.mkdir(parents=True, exist_ok=True)
+                descriptor = bootstrap / f"{tool_id}.json"
+                descriptor.write_text(descriptor_text, encoding="utf-8")
+                manifest = self._official_signer.sign(
+                    ToolManifest(
+                        tool_id=tool_id,
+                        version="builtin-v2",
+                        digest=sha256_file(descriptor),
+                        origin="official",
+                        entrypoint=f"python:{tool_id}",
+                        capabilities=(capability,),
+                        dependencies=tuple(implementation_dependencies),
+                        state="approved",
+                    )
+                )
+                record = self.toolbox.install_official(
+                    descriptor,
+                    manifest,
+                    signer=self._official_signer,
+                    conformance=lambda path, _: path.is_file(),
+                )
+        if record is None:
             if not official:
                 denial = {
                     "allowed": False,
@@ -312,33 +381,7 @@ class RuntimeGuard:
                 }
                 self.denial_logs.append(denial)
                 raise PermissionError("callback_tool_not_approved")
-            bootstrap = self.toolbox.root / ".bootstrap"
-            bootstrap.mkdir(parents=True, exist_ok=True)
-            descriptor = bootstrap / f"{tool_id}.json"
-            descriptor.write_text(
-                json.dumps(
-                    {"tool_id": tool_id, "kind": "in_process_adapter", "capability": capability},
-                    sort_keys=True,
-                ),
-                encoding="utf-8",
-            )
-            manifest = self._official_signer.sign(
-                ToolManifest(
-                    tool_id=tool_id,
-                    version="builtin-v1",
-                    digest=sha256_file(descriptor),
-                    origin="official",
-                    entrypoint=f"python:{tool_id}",
-                    capabilities=(capability,),
-                    state="approved",
-                )
-            )
-            record = self.toolbox.install_official(
-                descriptor,
-                manifest,
-                signer=self._official_signer,
-                conformance=lambda path, _: path.is_file(),
-            )
+            raise PermissionError("callback_tool_not_approved")
         if capability not in record.manifest.capabilities:
             raise PermissionError("callback_capability_not_approved")
         provider_receipt: dict[str, object] | None = None
@@ -401,6 +444,8 @@ class RuntimeGuard:
             origin=record.manifest.origin,
             human_approval_receipt_id=record.manifest.approval_receipt_id,
         )
+        self._executed_tools[tool_id] = tool_identity
+        self.registry = ACPRegistrySnapshot(tuple(self._executed_tools.values()))
         broker = CapabilityBroker(
             workspace_root=self.workspace_root,
             local_allowlist=self.broker.local_allowlist,
@@ -591,7 +636,7 @@ class RuntimeGuard:
                 self.budget_ledger.append(
                     {
                         **(budget_receipt or {}),
-                        "state": "released_after_failure",
+                        "state": failure_budget_state,
                         "provider": provider,
                         "invocation_id": invocation_id,
                     }
