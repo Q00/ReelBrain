@@ -1,110 +1,143 @@
+<p align="center">
+  <img src="docs/assets/reelbrain-logo.png" alt="ReelBrain" width="700" />
+</p>
+
 # ReelBrain
 
-ReelBrain is a local-first AI video-editing agent team for solo educational creators. It turns one pre-synchronized talking-head video into verified short-form and long-form local export packages, learns only creator-confirmed preferences, governs every runtime effect through ACP-backed capability checks, and improves bounded agent configurations through evidence-gated Sleep.
+ReelBrain is a local-first AI video-editing agent team that turns raw footage into creator-review drafts, learns each creator’s taste from explicit feedback, and applies that history to future edits without treating memory as source evidence.
 
-## Current platform
+<p align="center">
+  <img src="docs/assets/reelbrain-agent-team.png" alt="The four ReelBrain editing agents" width="960" />
+</p>
 
-- Certified development baseline: macOS Apple Silicon
-- Python: 3.11+
-- Media runtime: FFmpeg and FFprobe
-- Default local STT adapter: Whisper CLI, with no silent cloud fallback
-- Delivery: local H.264/AAC files and evidence bundles; direct social publishing is intentionally excluded
+ReelBrain is an OpenAI Build Week submission in the **Work and Productivity** track.
 
-## Setup
+## Demo links
+
+- Landing page: [reelbrain-landing-xi.vercel.app](https://reelbrain-landing-xi.vercel.app/)
+- Three-minute product walkthrough: `[DEMO_VIDEO_URL]`
+- Build Week submission: `[BUILD_WEEK_SUBMISSION_URL]`
+- Community Edition releases: `[RELEASES_URL]`
+
+## Key features
+
+- Four editable editorial personas for story, retention, style, and continuity, coordinated by a Showrunner.
+- Local video preflight, playback, fullscreen review, draft version history, and non-destructive revisions.
+- Grounded short-form and long-form planning with Korean and English caption artifacts.
+- Explicit Yes/No gates for revisions and human approval before generated tools can be built or deployed.
+- Inspectable agent activity, tool calls, orchestration rationale, workflow progress, and durable evidence.
+- Like, Dislike, and Skip feedback loops that create explicit preferences, corrections, or tentative taste episodes.
+- Creator-controlled Taste Profile records that can be inspected, edited, disabled, or deleted.
+- ACP-backed semantic tools and evidence-gated Sleep optimization for prompts, tool descriptions, and workflows.
+
+## Agent workflow and Taste Profile
+
+| Story Editor | Retention Editor | Style Editor | Continuity Editor |
+| --- | --- | --- | --- |
+| <img src="docs/assets/reelbrain-story-editor.png" alt="Story Editor" width="180" /> | <img src="docs/assets/reelbrain-retention-editor.png" alt="Retention Editor" width="180" /> | <img src="docs/assets/reelbrain-style-editor.png" alt="Style Editor" width="180" /> | <img src="docs/assets/reelbrain-continuity-editor.png" alt="Continuity Editor" width="180" /> |
+| Finds a complete educational arc. | Strengthens the hook and pacing. | Applies approved creator taste. | Protects meaning, caveats, and endings. |
+
+The Showrunner receives the creator’s request and selected-draft context, then answers directly or consults the four editors. Approved effects run through bounded semantic tools, produce versioned local artifacts, and remain in creator review until the creator decides otherwise.
+
+The Taste Profile is a behavioral prior, not evidence. A Like becomes an explicit preference with provenance. A Dislike records the creator’s reason and uses it to plan another draft. Skip stores the original request only as a tentative episode; it does not become active taste until consistent evidence exists and the creator confirms it. Current steering always overrides stored taste.
+
+## Quick start and judge testing
+
+Prerequisites: macOS on Apple Silicon, Python 3.11+, Node.js, FFmpeg, FFprobe, `uv`, and the Tauri development prerequisites.
+
+```bash
+git clone https://github.com/Q00/ReelBrain.git
+cd ReelBrain
+uv sync --dev
+uv run reelbrain doctor
+
+cd desktop
+npm install
+npm run tauri dev
+```
+
+Judge test path:
+
+1. Launch the desktop app and connect Codex through the official ChatGPT sign-in flow.
+2. Open an existing creator-review project or drag a creator-owned video into Projects.
+3. Play a draft, use the local timestamp control, and send a revision request to ReelBrain or an `@agent`.
+4. Review the orchestration rationale and choose **Yes** on the structured revision card.
+5. Watch the real render progress, open the new version, then choose **Like**, **Dislike**, or **Skip**.
+6. Open **Memory & Evidence** to inspect the resulting preference, correction, tentative episode, and provenance.
+
+Optional provider-backed image and thumbnail features require `OPENAI_API_KEY=<YOUR_OPENAI_API_KEY>` or `OPEN_API_KEY=<YOUR_OPENAI_API_KEY>` in a local `.env`. Do not commit credentials.
+
+## Sample data
+
+- Download the judge sample package from `[SAMPLE_DATA_URL]`, extract it locally, and keep its directory outside Git.
+- Or use a creator-owned MP4, MOV, M4V, MKV, or WebM containing both video and audio.
+- For the shortest review path, use a 30–60 second rendered draft with adjacent `.en.srt`, `.ko.srt`, and `.ass` caption files.
+- For full dogfood preparation, replace placeholders below with local paths and identifiers:
+
+```bash
+uv run reelbrain dogfood prepare <VIDEO_OR_ZIP_PATH> \
+  --output <LOCAL_OUTPUT_DIRECTORY> \
+  --project-id <PROJECT_ID> \
+  --creator-id <CREATOR_ID> \
+  --rights-license creator-owned \
+  --shorts 3 \
+  --minimum-long-minutes 10 \
+  --maximum-long-minutes 15
+```
+
+Provider confidence does not prove caption accuracy. Correct captions against the source before treating them as creator-approved.
+
+## How Codex with GPT-5.6 accelerated development
+
+Ouroboros was used to run PM interviews, clarify requirements, generate the ReelBrain Seed, execute the specification, and evaluate the resulting system. Codex with GPT-5.6 then helped turn those decisions into a working Python runtime and Tauri desktop product: it implemented the governed agent and tool architecture, built the dogfood render pipeline, debugged provider and media failures, added persistent taste/evidence flows, and repeatedly exercised the real desktop UI with Computer Use.
+
+The most valuable contribution was not raw code generation. Codex maintained continuity across product decisions, architecture, implementation, tests, and visual QA while preserving the creator’s explicit governance boundaries.
+
+## Key product and engineering decisions made by the human creator
+
+- Memory is a behavioral prior; it is never evidence for what the source video says.
+- The creator is the source of truth for their work, voice, brand, and final approval.
+- ReelBrain uses exactly four visible editing personas; the Showrunner orchestrates them rather than acting as a fifth editor.
+- Outcomes determine editing quality. Exact tool-sequence assertions are reserved for safety and required evidence steps.
+- Natural-language requests are judged by the LLM, not keyword or approval regexes. Effects begin only through structured UI controls.
+- Agents may request new tools through ACP, but humans approve quarantined build, testing, and deployment separately.
+- Revisions are non-destructive, versioned, locally validated, and never presented as complete until a changed video passes verification.
+- Sleep may propose bounded configuration changes, but creator memory, permissions, consent, secrets, and production promotion remain governed.
+
+## Current limitations
+
+- The certified development baseline is macOS on Apple Silicon; other platforms are not yet validated.
+- The desktop revision renderer currently supports bounded visual finishing and loudness plans. Arbitrary timeline edits, caption rewrites, music replacement, or new reframing require additional governed tool capabilities.
+- Caption quality still requires creator correction or an independent reference; ReelBrain does not claim automatic 95% accuracy.
+- Long-form workflows and provider-backed thumbnail generation require more setup and take longer than the desktop review loop.
+- There is no direct social publishing in the current version.
+- Taste synchronization, backups, managed rendering, and hosted project history are not part of the local Community Edition today.
+
+## Community Edition vs. Creator Cloud
+
+The **Community Edition** is the complete source-available local product: creators can inspect, modify, and self-host it subject to the Sustainable Use License. Local editing, agent configuration, Taste Profile controls, evidence, and governed tools are not intentionally crippled to force an upgrade.
+
+The planned **Creator Cloud** sells convenience: managed rendering, no API-key setup, persistent Taste Brain synchronization, project history, backups, automatic updates, and creator support. It is not positioned as a gate on the local product’s core editing capabilities.
+
+## Contributing
+
+Issues, reproducible bug reports, evaluation fixtures, documentation fixes, and focused pull requests are welcome. Before contributing:
 
 ```bash
 uv sync --dev
-uv run reelbrain doctor
-uv run reelbrain setup
 uv run pytest -q
+
+cd desktop
+npm install
+npm run build
+cd src-tauri
+cargo test
 ```
 
-`doctor` reports required dependencies and platform compatibility. `setup` prints the complete local setup plan and waits for explicit approval. After reviewing it, run `uv run reelbrain setup --approve` to bootstrap the immutable toolbox and execute local FFmpeg/FFprobe conformance checks. Neither command installs packages, requests secrets, enables providers, or executes remote setup scripts. Missing dependencies are reported with proposed commands for the creator to approve separately.
+Do not include private footage, transcripts, provider credentials, generated `.env` files, or unlicensed media in contributions. By contributing, you agree that your contribution may be distributed under the repository’s current license and any applicable contributor terms at `[CONTRIBUTOR_TERMS_URL]`.
 
-## skills.sh client
+## License
 
-The distributable thin-client skill is in [`skills/reelbrain`](skills/reelbrain). It can be published through a skills.sh-compatible registry, but installation grants no runtime permissions and does not install native or Python dependencies. The skill delegates editing, ACP governance, provider consent, memory, and release gates to the local ReelBrain runtime.
+ReelBrain is **source-available** under the [Sustainable Use License](LICENSE). Individuals may use, modify, and self-host ReelBrain for personal, educational, research, and internal business purposes, subject to the exact `LICENSE` terms.
 
-## Short-form dogfood
-
-The default command transcribes locally with Whisper, fans candidates out to Meaning Scout, Hook Scout, Creator Advocate, and Context Guardian, then lets the Showrunner select three diverse 30–60 second candidates.
-
-```bash
-uv run reelbrain short ./source.mp4 \
-  --output ./.reelbrain/projects/demo-short \
-  --project-id demo-short \
-  --creator-id founder \
-  --approval-receipt founder-approved-demo-short \
-  --rights-license creator-owned \
-  --preferred-term Ouroboros \
-  --preferred-term AgentOS \
-  --thumbnail
-```
-
-The source must be a 5–60 minute MP4, MOV, or WebM with decodable video and audio. The command fails closed when Whisper is unavailable, rights are not approved, the source is unsupported, or three source-faithful candidates cannot be found.
-
-If a creator already has an SRT or VTT transcript, pass `--transcript ./source.srt`. ReelBrain validates and uses it locally as the caption/highlight reference, so Whisper is not required and no provider call occurs.
-
-Omit `--approval-receipt` to generate a local `CREATOR_REVIEW` draft. ReelBrain only reports `PUBLISH_READY` after the creator supplies an approval receipt and all objective gates pass.
-
-Before long-form rendering, ReelBrain can propose a transcript-grounded argument map without treating it as creator-approved:
-
-```bash
-uv run reelbrain plan-long ./source.mp4 \
-  --transcript ./source.srt \
-  --output ./.reelbrain/projects/demo-long-plan \
-  --project-id demo-long \
-  --creator-id founder
-```
-
-Review or edit `proposed_argument_map.json`; only the creator-confirmed version should be passed to `reelbrain long`.
-
-## Long-form dogfood
-
-Long-form accepts a creator-confirmed argument-map JSON array using the `TranscriptSegment` fields and a corrected transcript file.
-
-```bash
-uv run reelbrain long ./source.mp4 \
-  --output ./.reelbrain/projects/demo-long \
-  --project-id demo-long \
-  --creator-id founder \
-  --approval-receipt founder-approved-demo-long \
-  --rights-license creator-owned \
-  --argument-map ./argument-map.json \
-  --corrected-transcript ./corrected-transcript.txt
-```
-
-The source must be 20–60 minutes, and the confirmed selection must total 5–12 minutes. ReelBrain preserves the creator-confirmed argument order.
-
-## Release evidence
-
-Release evidence is append-only and stored locally under `.reelbrain/release-evidence/` by default.
-
-```bash
-uv run reelbrain release record-governance --receipt governance-clean-1
-uv run reelbrain release verify-fixtures
-uv run reelbrain release record-founder \
-  --run-id founder-short-1 \
-  --output-mode short \
-  --package ./.reelbrain/projects/founder-short-1
-uv run reelbrain release record-cohort-response \
-  --response ./cohort-responses/creator-1.json
-uv run reelbrain release evaluate
-```
-
-Founder evidence is derived from the actual package, validation report, creator approval receipt, and final-video digest. Cohort response files require a unique creator id, reviewed package digest, and attestation receipt. Duplicate package or creator rows cannot inflate thresholds.
-
-The evaluator cannot be satisfied by unit tests alone. V1 requires real founder dogfood evidence for at least three short and three long videos, plus a ten-creator private cohort meeting the Seed thresholds.
-
-## Safety and memory boundaries
-
-- Ordinary feedback is episode-only. Durable memory requires explicit remember/confirmation.
-- Current steering overrides edit overrides, which override confirmed scoped preferences.
-- Preferences are inspectable, editable, disableable, portable, and deletable.
-- Content-free deletion fences prevent stale exports from resurrecting deleted preferences.
-- Runtime filesystem/tool effects pass through a deny-by-default reference monitor.
-- Sleep can change only bounded configuration families and cannot mutate creator memory, tool code, permissions, secrets, consent, retention, budgets, or public skills packages.
-
-## Specification
-
-The complete product Seed is in [`.ouroboros/seeds/reelbrain-v1.yaml`](.ouroboros/seeds/reelbrain-v1.yaml).
+Offering ReelBrain as a competing paid hosted service, reselling it, or commercially providing it to third parties is outside the permitted uses and requires a separate commercial license from `[COMMERCIAL_LICENSE_CONTACT]`. The `LICENSE` file is authoritative if this summary and the license differ.

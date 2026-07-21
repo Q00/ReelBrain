@@ -2,7 +2,7 @@
 
 > Final Architecture Design  
 > Date: 2026-07-21  
-> Status: Final design — independent QA PASS (0.90), validated against the current ReelBrain codebase  
+> Status: Final design — core architecture QA PASS (0.90); desktop product layer added with official Codex authentication constraints
 > Primary host: Codex  
 > Transport: MCP over stdio  
 
@@ -90,6 +90,7 @@ The concise product definition is:
 - Convert feedback into durable taste only through explicit remember or confirmed proposals.
 - Keep provider-backed editorial inference as a fallback during migration.
 - Support generic Codex subagents when project custom-agent profiles are unavailable.
+- Provide a desktop application where creators can connect Codex, drag and drop local video, chat with ReelBrain, inspect agent activity, review outputs, and manage their taste memory.
 
 ## 5. Non-Goals
 
@@ -101,6 +102,8 @@ The concise product definition is:
 - A single rejected or selected edit does not automatically become a durable preference.
 - Persona diversity ablation is not required for the hackathon build.
 - Direct social publishing remains outside the first version.
+- ReelBrain does not implement or impersonate an undocumented OpenAI/Codex OAuth client.
+- Drag-and-drop does not imply automatic upload, provider consent, spend, or publishing.
 
 ## 6. State Ownership
 
@@ -198,6 +201,180 @@ The memory plane is responsible for:
 - supporting inspect, edit, disable, re-enable, export, import, and delete;
 - preventing deleted values from resurrection through deletion fences;
 - producing a versioned memory snapshot for each fan-out.
+
+### 7.5 ReelBrain Desktop Application
+
+ReelBrain Desktop is the creator-facing product shell around the governed fan-out harness. It turns the local runtime, Codex orchestration, memory ledger, evidence stream, and renderer into one approachable workflow for non-technical creators.
+
+The primary experience is:
+
+```text
+Connect Codex
+→ drag and drop a raw video
+→ talk to ReelBrain about the desired edit
+→ watch the editorial agent team work
+→ review grounded Shorts and long-form drafts
+→ inspect or correct “Your Taste”
+→ approve a creator-review package
+```
+
+The desktop application owns presentation and local process lifecycle. It does not own editorial truth, permissions, durable taste rules, or render authorization.
+
+### 7.6 Codex Authentication Decision
+
+Codex officially supports browser-based **Sign in with ChatGPT** for the ChatGPT desktop app, Codex CLI, and IDE extension. Codex app-server is the documented deep-integration surface for products that need authentication, conversation history, approvals, and streamed agent events.
+
+ReelBrain Desktop therefore uses a **Codex-managed login**, not a ReelBrain-implemented copy of OpenAI's OAuth flow:
+
+1. start a local `codex app-server` sidecar over stdio or a local Unix socket;
+2. query the Codex authentication state;
+3. when signed out, present `Connect Codex` and invoke the official Codex browser login flow;
+4. let Codex store and refresh its own credentials using its configured keyring or credential store;
+5. communicate with Codex through app-server messages rather than reading credential files.
+
+ReelBrain must never:
+
+- register or imitate an undocumented Codex OAuth client;
+- scrape browser sessions;
+- read, copy, upload, or parse `~/.codex/auth.json`;
+- expose Codex access tokens to the renderer, MCP tasks, logs, memory, or evidence bundle;
+- claim that every ChatGPT account has the same Codex entitlement or workspace permissions.
+
+The UI copy should say **Connect Codex** or **Continue with ChatGPT through Codex**, not imply that ReelBrain itself is an OpenAI identity provider.
+
+Creators may alternatively use Codex's supported API-key authentication, but that path uses standard OpenAI API billing rather than included ChatGPT plan usage.
+
+Official references:
+
+- [Codex Authentication](https://learn.chatgpt.com/docs/auth)
+- [Codex App Server](https://learn.chatgpt.com/docs/app-server)
+
+### 7.7 Desktop Runtime Topology
+
+```mermaid
+flowchart LR
+    UI["ReelBrain Desktop UI"] --> AS["Codex app-server sidecar"]
+    UI --> RB["ReelBrain local service"]
+    AS --> CA["Codex root + subagents"]
+    CA --> MCP["ReelBrain MCP server"]
+    MCP --> RB
+    RB --> MEM["Taste Memory"]
+    RB --> EVD["Evidence Store"]
+    RB --> RT["RuntimeGuard"]
+    RT --> FFM["FFmpeg / FFprobe / Pillow"]
+    UI --> FS["Creator-approved local files"]
+    FS --> RB
+```
+
+Recommended desktop stack:
+
+| Layer | Recommendation | Reason |
+|---|---|---|
+| Desktop shell | Tauri 2 | small bundle, native file dialogs, explicit sidecar permissions |
+| UI | React + TypeScript | fast product iteration and accessible component ecosystem |
+| Local backend | existing Python ReelBrain runtime | preserves current media, governance, and memory implementation |
+| Agent backend | local Codex app-server sidecar | official rich-client integration surface |
+| Tool bridge | ReelBrain MCP over stdio | host-driven fan-out contract |
+| Media | FFmpeg, FFprobe, Pillow | existing deterministic local rendering |
+| Secrets | OS keyring through Codex/runtime-owned stores | desktop UI never handles raw provider credentials |
+
+Local stdio or Unix sockets are preferred. Codex app-server WebSocket transport is currently documented as experimental and unsupported, so it must not be the default desktop architecture.
+
+### 7.8 Desktop Information Architecture
+
+The application has five primary surfaces.
+
+#### Home
+
+- large drag-and-drop video target;
+- recent projects;
+- Codex connection status;
+- local runtime health for FFmpeg, FFprobe, storage, and MCP;
+- one clear primary action: `Drop a video to begin`.
+
+#### Project Workspace
+
+- source-video player and transcript timeline;
+- ReelBrain conversation panel;
+- agent-team activity with Meaning, Hook, Creator, and Context lanes;
+- candidate cards with grounded timestamps and reasons;
+- current steering and active edit constraints;
+- progress expressed as creator outcomes, not internal pipeline jargon.
+
+#### Your Taste
+
+- active preference cards grouped by voice, hook, pacing, context, captions, and visual style;
+- scope badges such as `Shorts`, `Technical`, and `Korean`;
+- provenance and source run;
+- confidence and explicit-versus-confirmed status;
+- edit, disable, re-enable, and forget actions;
+- proposed preferences awaiting creator confirmation;
+- visible statement that taste guides behavior but is not source evidence.
+
+#### Review
+
+- side-by-side Short previews and one long-form draft;
+- title, rationale, source range, captions, and thumbnail;
+- approve, reject, revise, and `remember this preference` actions;
+- clear `CREATOR_REVIEW` state;
+- no publish-ready claim without the existing gates.
+
+#### Evidence
+
+- human-readable timeline of permissions, agent activity, denial receipts, memory versions, accepted-plan validation, and rendering;
+- advanced raw bundle inspection behind a disclosure control;
+- clear distinction between normal agent disagreement and a denied effect.
+
+### 7.9 Drag-and-Drop Ingestion
+
+Dropping a video does not immediately upload or spend money.
+
+```text
+drop file
+→ inspect locally
+→ inventory codec, duration, streams, and source digest
+→ show proposed workflow and provider effects
+→ obtain explicit approval where required
+→ start transcription and fan-out
+```
+
+The desktop drop handler passes only creator-approved absolute paths to ReelBrain. It does not copy files outside the selected project workspace without disclosure. Unsupported media, missing audio, excessive duration, and inaccessible paths fail before agent execution.
+
+### 7.10 Conversational Control
+
+The chat surface is the main creator steering interface.
+
+Examples:
+
+```text
+“Make the hooks technical, not sensational.”
+“Keep the complete caveat in the second Short.”
+“Why did you reject this clip?”
+“Remember that I prefer bilingual captions.”
+“Forget my preference for fast pacing.”
+```
+
+Chat messages are classified into:
+
+- episode instruction;
+- current steering that advances the workflow epoch;
+- preference feedback;
+- explicit remember request;
+- preference edit, disable, or delete request;
+- read-only explanation or evidence query.
+
+The desktop app confirms destructive or durable memory actions and routes them through the corresponding governed MCP tool.
+
+### 7.11 Desktop Security Boundary
+
+- File access begins with a native user selection or drag-and-drop event.
+- The renderer receives only accepted plan and output-root authority.
+- Codex credentials remain inside Codex-managed storage.
+- OpenAI provider keys remain inside ReelBrain's existing secret resolver and `RuntimeGuard` flow.
+- Persona agents use read-only sandboxes and scoped ReelBrain MCP grants.
+- The desktop UI receives redacted evidence views, never raw capability tokens.
+- Crash reports and analytics exclude transcript content, taste values, source paths, tokens, and provider payloads by default.
+- Projects remain local unless a future explicit synchronization feature is separately authorized.
 
 ## 8. Agent Definitions
 
@@ -1001,6 +1178,10 @@ Writes use temporary files followed by atomic replace. Canonical JSON digests us
 | `reelbrain/cli.py` | `reelbrain mcp serve` |
 | `skills/reelbrain/SKILL.md` | explicit Codex delegation and result-submission contract |
 | `.codex/agents/*.toml` | optional project persona profiles |
+| `desktop/src/` | Tauri React interface for onboarding, projects, chat, taste, review, and evidence |
+| `desktop/src-tauri/` | native file access, sidecar lifecycle, local IPC, packaging, and permissions |
+| `desktop/src/services/codex.ts` | Codex app-server client and authentication-state bridge |
+| `desktop/src/services/reelbrain.ts` | local ReelBrain service client |
 
 ## 20. Founder Dogfood Integration
 
@@ -1112,6 +1293,21 @@ Exit criterion: one real source completes plan-to-package with a linked evidence
 - [ ] Add shadow comparison against the provider-backed path.
 - [ ] Record persona ablation as future work rather than a release blocker.
 
+### Phase F — Desktop Product Shell
+
+- [ ] Spike local Codex app-server startup and authentication-state discovery over stdio.
+- [ ] Verify the official browser login handoff without reading Codex credential files.
+- [ ] Scaffold the Tauri 2 + React desktop application.
+- [ ] Add local runtime doctor and sidecar lifecycle management.
+- [ ] Implement drag-and-drop ingestion with preflight before provider effects.
+- [ ] Implement project workspace, ReelBrain chat, and agent activity lanes.
+- [ ] Implement `Your Taste` inspection, proposals, edit, disable, and forget actions.
+- [ ] Implement creator-review video previews and evidence timeline.
+- [ ] Persist only UI preferences in the desktop layer; keep editorial and taste authority in ReelBrain.
+- [ ] Package a signed macOS Apple Silicon build for the certified baseline.
+
+Exit criterion: a signed-in creator can drop one local video, chat with ReelBrain, observe four agents, review outputs, inspect taste, and see evidence without using the CLI.
+
 ## 22. Test Plan
 
 ### 22.1 Protocol and Host Tests
@@ -1203,23 +1399,44 @@ Exit criterion: one real source completes plan-to-package with a linked evidence
 - Host-plan dogfood mode omits only the editorial provider call and spend.
 - Provider dogfood mode remains unchanged.
 
+### 22.7 Desktop Application Tests
+
+- Signed-out state offers `Connect Codex` and launches only the official Codex login flow.
+- The desktop app never reads or copies Codex credential files.
+- Existing Codex login is detected through the supported app-server surface.
+- API-key authentication is labeled as usage-based billing.
+- Dragging a video performs local preflight before any network or provider effect.
+- Unsupported files fail with an actionable local error.
+- Chat steering advances the visible epoch and invalidates stale work.
+- `Remember`, edit, disable, and forget actions require confirmation and produce memory receipts.
+- The taste view hides deleted content while retaining content-free deletion evidence.
+- Agent activity remains inspectable without exposing raw prompts, tokens, or secrets.
+- Review outputs remain `CREATOR_REVIEW` until the existing approval gates pass.
+- Sidecar termination, app restart, and interrupted render recover without losing authoritative evidence.
+- Accessibility checks cover keyboard navigation, focus order, contrast, captions, and reduced motion.
+
 ## 23. Hackathon Demonstration
 
 The demonstration should make governance visible rather than merely showing four agents in a UI.
 
-1. Load one creator-owned video and transcript.
-2. Call `reelbrain_plan_fanout`.
-3. Show four task cards with distinct persona grants.
-4. Let Codex spawn all four subagents.
-5. Show one allowed candidate-context request.
-6. Trigger a controlled unauthorized render, path, or candidate request from a persona task.
-7. Show the immediate denial and its receipt in the evidence stream.
-8. Submit the four grounded results and Showrunner proposal.
-9. Demonstrate stale rejection by advancing the epoch through steering, or show the bound epoch in the accepted submission.
-10. Render the accepted plan into a `CREATOR_REVIEW` package.
-11. Record explicit creator feedback such as “remember: prefer technical tension over sensational hooks.”
-12. Start the next relevant fan-out and show the new memory snapshot digest and scoped Creator Advocate context.
-13. Open the evidence bundle linking permissions, denials, taste, validation, and output.
+1. Open ReelBrain Desktop and connect through the official Codex sign-in flow.
+2. Drag and drop one creator-owned video.
+3. Show local preflight and the proposed provider effects before starting.
+4. Start the edit from the ReelBrain chat surface.
+5. Call `reelbrain_plan_fanout`.
+6. Show four agent cards with distinct persona grants.
+7. Let Codex spawn all four subagents.
+8. Show one allowed candidate-context request.
+9. Trigger a controlled unauthorized render, path, or candidate request from a persona task.
+10. Show the immediate denial and its receipt in the desktop evidence timeline.
+11. Submit the four grounded results and Showrunner proposal.
+12. Demonstrate stale rejection by steering through chat, or show the bound epoch in the accepted submission.
+13. Render the accepted plan into a `CREATOR_REVIEW` package.
+14. Review a Short in the desktop application.
+15. Record explicit creator feedback such as “remember: prefer technical tension over sensational hooks.”
+16. Open `Your Taste` and show the new scoped preference and provenance.
+17. Start the next relevant fan-out and show the new memory snapshot digest and scoped Creator Advocate context.
+18. Open the evidence bundle linking permissions, denials, taste, validation, and output.
 
 The demo message is:
 
@@ -1256,6 +1473,11 @@ and why the final render was authorized.
 - [ ] Append-only events are authoritative; projections use revision CAS and recover after bounded crash points.
 - [ ] Host-plan dogfood mode truthfully records zero ReelBrain editorial provider spend while retaining STT/image governance.
 - [ ] Existing editorial, memory, governance, steering, deletion, Sleep, and render tests remain green.
+- [ ] ReelBrain Desktop uses Codex-managed authentication without reading or persisting Codex credentials itself.
+- [ ] A creator can drag and drop a local video and see preflight before any provider effect.
+- [ ] A creator can chat with ReelBrain, observe the four agent lanes, review outputs, and inspect the evidence timeline.
+- [ ] A creator can inspect, confirm, edit, disable, and forget taste preferences from the desktop UI.
+- [ ] Desktop restart does not lose authoritative fan-out, memory, denial, or render evidence.
 
 ## 25. Explicit Limitations
 
@@ -1265,6 +1487,8 @@ and why the final render was authorized.
 - Initial evidence is locally tamper-evident through hash linkage, not externally notarized.
 - Creator taste quality depends on explicit feedback and review discipline.
 - Deterministic ranking can validate structure and score proposals but cannot fully replace editorial language generation in the MVP.
+- Codex Sign in with ChatGPT availability depends on the creator's account, plan, workspace permissions, and supported Codex surface; it is not a universal identity entitlement.
+- The desktop integration must track the supported Codex app-server protocol. Experimental remote WebSocket transport is not a production dependency.
 
 ## 26. Final Decision
 
@@ -1595,3 +1819,118 @@ Required packaging work:
 - test `uv run --extra mcp reelbrain mcp serve`;
 - test the installed console script, not only direct module invocation;
 - document Codex `.mcp`/`config.toml` registration.
+
+## Appendix C. GPT Image 2 Desktop UI Design Prompt
+
+Attach the supplied ReelBrain logo as the image reference and use the following prompt for the first high-fidelity desktop concept.
+
+```text
+Design a high-fidelity desktop application UI for “ReelBrain,” an AI agent team that edits a creator’s raw videos, remembers creator-approved taste, and evolves with them.
+
+BRAND REFERENCE
+Use the attached ReelBrain logo as the authoritative brand reference. Preserve its visual identity: black background, luminous violet-to-electric-blue-to-magenta-to-soft-coral gradient, film reel merged with a brain, subtle neural nodes, and a central play symbol. Do not redesign or distort the logo. Use the gradient sparingly as an accent system, not as a full-screen neon effect.
+
+OUTPUT
+Create one polished 16:10 desktop product screenshot at 1440×900, front-facing, no device mockup, no hands, no people, no marketing landing page. It should look like a real macOS creative application ready to ship, with crisp readable interface text, precise spacing, and restrained premium visual design.
+
+DESIGN CHARACTER
+- dark obsidian canvas, slightly warmer than pure black
+- calm, intelligent, creator-focused, trustworthy
+- subtle translucent panels with fine borders, not excessive glassmorphism
+- soft purple-blue focus glow and small coral highlights
+- generous whitespace and clear hierarchy
+- modern neutral sans-serif typography
+- rounded corners around 10–14 px
+- sophisticated video-editing tool, not a gamer dashboard
+- accessible contrast and visible focus states
+- minimal motion implied through progress indicators, not visual noise
+
+PRIMARY SCREEN: REELBRAIN PROJECT WORKSPACE
+
+Top bar:
+- small exact ReelBrain logo at the top left
+- project title: “The Memory Is Not Evidence”
+- status pill: “Codex connected” with a small green dot
+- subtle local-only indicator: “Files stay on this Mac”
+- primary action at top right: “Review 4 drafts”
+
+Left navigation rail:
+- Home
+- Projects
+- Your Taste
+- Evidence
+- Settings
+- compact creator avatar at the bottom
+
+Main center workspace:
+- a large 16:9 source video preview showing a tasteful generic educational talking-head frame
+- below it, a clean transcript timeline with colored candidate ranges
+- a drag-and-drop empty-state hint integrated above the timeline: “Drop another video”
+- a visible but restrained agent progress strip containing four independent editorial lanes:
+  1. Meaning Scout — “Found 6 grounded moments”
+  2. Hook Scout — “Ranking openings”
+  3. Creator Advocate — “Applying your taste”
+  4. Context Guardian — “1 unsafe cut rejected”
+- visually communicate parallel work without looking like server monitoring software
+
+Right conversation panel:
+- title: “Chat with ReelBrain”
+- short conversation:
+  Creator: “Keep this technical, not sensational.”
+  ReelBrain: “Got it. I’ll preserve the full caveat and favor technical tension.”
+- a compact evidence-aware message: “4 agents are reviewing 18 grounded candidates.”
+- message composer with placeholder: “Steer the edit, ask why, or say remember…”
+- small buttons: “Preserve context”, “Make it tighter”, “Remember this”
+
+Bottom review drawer:
+- three compact vertical Short preview cards and one horizontal long-form card
+- each card shows title, duration, source time range, and one-line rationale
+- selected card uses a subtle violet-blue gradient border
+- status labels such as “Grounded”, “Ready for review”, and “Creator approval required”
+
+YOUR TASTE SUMMARY
+Include a small expandable panel labeled “Your Taste” with three preference chips:
+- “Technical tension > sensational hooks”
+- “Preserve complete caveats”
+- “Korean + English captions”
+Show a quiet note: “Taste guides behavior. It is never treated as source evidence.”
+
+GOVERNANCE DETAIL
+Include one small, understandable evidence notification—not a scary error banner:
+“Context Guardian was denied render access · View receipt”
+This should make ReelBrain’s governed-agent differentiation visible without dominating the screen.
+
+TEXT AND LOGO QUALITY
+- render “ReelBrain” exactly
+- keep all UI copy correctly spelled and readable
+- use the attached logo exactly once in the top-left brand position
+- avoid large decorative logo placement
+- do not invent unrelated company names
+
+AVOID
+- no cyberpunk control room
+- no excessive neon bloom
+- no dense analytics dashboard
+- no generic chatbot-only layout
+- no code editor
+- no floating 3D brains or robots
+- no giant waveforms
+- no fake stock-photo marketing composition
+- no unreadable microscopic text
+- no rainbow palette outside the ReelBrain gradient
+- no social publishing screen
+
+The final image should immediately communicate: drop in a video, collaborate with an AI editorial team, understand what the agents are doing, inspect what ReelBrain has learned about your taste, and review grounded video drafts safely.
+```
+
+### Optional Onboarding Variant
+
+```text
+Using the same ReelBrain brand system and attached logo, design a minimal ReelBrain Desktop onboarding screen at 1440×900. Show one centered app window with the exact ReelBrain logo, the headline “Your AI editing team, with your taste,” a primary button labeled “Connect Codex,” secondary copy “Continue through the official Codex sign-in flow,” and a large local video drop zone labeled “Drop a video here after connecting.” Include three concise trust statements: “Local files stay local until you approve an effect,” “Taste is editable and forgettable,” and “Every agent action leaves evidence.” Keep the design dark, premium, sparse, friendly to non-technical creators, and consistent with the violet-blue-magenta-coral logo. Do not show OAuth tokens, API keys, developer terminology, terminal windows, or a marketing website.
+```
+
+### Optional Your Taste Variant
+
+```text
+Using the attached ReelBrain logo and the same desktop design system, create a high-fidelity “Your Taste” management screen for ReelBrain Desktop at 1440×900. Show preference cards grouped under Voice, Hooks, Context, Captions, Pacing, and Visual Style. Each card has a scoped badge, source run, explicit or confirmed status, confidence, version, and controls for Edit, Disable, and Forget. Include a proposal awaiting confirmation: “You often prefer complete technical caveats over tighter cuts.” Add a comparison panel showing “Default edit” versus “Personalized edit.” Make deletion and privacy controls clear without looking alarming. Emphasize that taste is a behavioral prior, not source evidence. Use the ReelBrain gradient only for active states and selected cards; keep the rest restrained, dark, spacious, and highly legible.
+```
