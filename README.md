@@ -15,8 +15,8 @@ ReelBrain is an OpenAI Build Week submission in the **Work and Productivity** tr
 ## Demo links
 
 - Landing page: [reelbrain-landing-xi.vercel.app](https://reelbrain-landing-xi.vercel.app/)
-- Three-minute product walkthrough: `[DEMO_VIDEO_URL]`
-- Build Week submission: `[BUILD_WEEK_SUBMISSION_URL]`
+- Three-minute product walkthrough: [Watch on YouTube](https://youtu.be/hVTOnNQee68)
+- Build Week submission: [ReelBrain on Devpost](https://devpost.com/software/reelbrain)
 - Community Edition releases: [GitHub Releases](https://github.com/Q00/ReelBrain/releases)
 
 ## Key features
