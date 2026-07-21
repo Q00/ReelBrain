@@ -17,7 +17,7 @@ ReelBrain is an OpenAI Build Week submission in the **Work and Productivity** tr
 - Landing page: [reelbrain-landing-xi.vercel.app](https://reelbrain-landing-xi.vercel.app/)
 - Three-minute product walkthrough: `[DEMO_VIDEO_URL]`
 - Build Week submission: `[BUILD_WEEK_SUBMISSION_URL]`
-- Community Edition releases: `[RELEASES_URL]`
+- Community Edition releases: [GitHub Releases](https://github.com/Q00/ReelBrain/releases)
 
 ## Key features
 
@@ -92,6 +92,64 @@ Provider confidence does not prove caption accuracy. Correct captions against th
 Ouroboros was used to run PM interviews, clarify requirements, generate the ReelBrain Seed, execute the specification, and evaluate the resulting system. Codex with GPT-5.6 then helped turn those decisions into a working Python runtime and Tauri desktop product: it implemented the governed agent and tool architecture, built the dogfood render pipeline, debugged provider and media failures, added persistent taste/evidence flows, and repeatedly exercised the real desktop UI with Computer Use.
 
 The most valuable contribution was not raw code generation. Codex maintained continuity across product decisions, architecture, implementation, tests, and visual QA while preserving the creator’s explicit governance boundaries.
+
+## Codex & GPT-5.6 build session
+
+**Codex session ID:** `019f7e65-0f11-7333-b3fe-c3d8401e0e2a`
+
+This session is the primary development record for the Build Week submission. Codex with GPT-5.6 worked across the full product loop rather than only generating isolated code:
+
+- Translated the Ouroboros PM interview and validated Seed into the governed ReelBrain runtime and Tauri desktop application.
+- Implemented and debugged four-agent fan-out, Showrunner synthesis, structured human approvals, ACP tool governance, versioned rendering, and creator-controlled Taste Profile evidence.
+- Diagnosed real media, transcription, provider, fullscreen, chat, focus, progress, and persistent-state failures while exercising the desktop product through Computer Use.
+- Built and ran the Python, TypeScript, and Rust verification suites, then used the results to guide fixes and regression checks.
+
+GPT-5.6 accelerated implementation, debugging, testing, and architectural continuity. The human creator remained responsible for ReelBrain’s product philosophy, governance boundaries, editing-agent model, memory-as-behavioral-prior principle, and final product decisions.
+
+## How we developed ReelBrain
+
+ReelBrain began with an Ouroboros PM interview rather than a prewritten feature list. The interview turned the creator’s initial idea into a validated Seed: solo educational creators, self-contained 30–60 second highlights, accurate bilingual captions, explicit feedback as the basis for taste learning, and the creator as the final source of truth. That Seed became the contract for Codex with GPT-5.6 to implement, evaluate, and repeatedly QA the product.
+
+During development, Ouroboros and Codex fanned out bounded questions to independent subagents instead of asking one agent to reason about every concern at once. Advisory lanes examined code context, challenged assumptions, simplified the workflow, traced architecture implications, and guarded acceptance criteria. The root agent synthesized their evidence, made the implementation change, and ran the relevant tests. This made disagreement visible while keeping one accountable orchestrator.
+
+The same pattern became ReelBrain’s product architecture. A creator request enters the Showrunner, ReelBrain freezes the source catalog, Taste Profile snapshot, workflow epoch, and capability grants, and Codex runs four isolated editorial lanes. Their results are treated as proposals—not authority—until ReelBrain validates their candidate references and the creator approves the effect.
+
+```mermaid
+flowchart TD
+    I["Ouroboros PM interview"] --> S["Validated ReelBrain Seed"]
+    S --> X["Codex + GPT-5.6 implementation"]
+    X --> D["Independent development subagents"]
+    D --> DC["Code context"]
+    D --> DV["Contrarian review"]
+    D --> DS["Workflow simplification"]
+    D --> DA["Architecture implications"]
+    D --> DG["Acceptance guard"]
+    DC --> Q["Root synthesis, execution, and evaluation"]
+    DV --> Q
+    DS --> Q
+    DA --> Q
+    DG --> Q
+    Q --> U["Creator request in ReelBrain"]
+    U --> H["Codex root / Showrunner"]
+    H --> P["ReelBrain plan_fanout"]
+    P --> G["Grounded catalog + taste snapshot + capability grants"]
+    G --> A1["Story Editor"]
+    G --> A2["Retention Editor"]
+    G --> A3["Style Editor"]
+    G --> A4["Continuity Editor"]
+    A1 --> Y["Showrunner synthesis"]
+    A2 --> Y
+    A3 --> Y
+    A4 --> Y
+    Y --> V["ReelBrain evidence and validation gates"]
+    V --> C["Creator Yes / No approval"]
+    C --> R["Versioned local render"]
+    R --> F["Like / Dislike / Skip"]
+    F --> M["Inspectable behavioral-prior memory"]
+    M --> P
+```
+
+Codex owns ephemeral execution: spawning lanes, concurrency, retries, and synthesis. ReelBrain owns durable trust: what source was frozen, what each agent was allowed to access, what was attempted, which proposal was accepted, what was rendered, and what the creator chose to remember. Taste is supplied to later agents as a scoped behavioral prior; it never replaces transcript or media evidence.
 
 ## Key product and engineering decisions made by the human creator
 
