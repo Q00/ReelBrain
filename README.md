@@ -43,7 +43,7 @@ The Taste Profile is a behavioral prior, not evidence. A Like becomes an explici
 
 ## Quick start and judge testing
 
-For the fastest start on Apple Silicon, download the [latest GitHub release](https://github.com/Q00/ReelBrain/releases/latest). Use the DMG as the installer, or download the ZIP for the portable `ReelBrain.app` runner. The current build is ad-hoc signed and not notarized, so macOS may require Control-clicking the app and choosing **Open** on first launch.
+For the fastest start on Apple Silicon, download the [latest GitHub release](https://github.com/Q00/ReelBrain/releases/latest). Use the DMG as the installer, or download the ZIP for the portable `ReelBrain.app` runner. The installed app includes ReelBrain’s Python modules and stores local state in `~/.ReelBrain`; Python, FFmpeg/FFprobe, and Codex or ChatGPT remain host prerequisites. The current build is ad-hoc signed and not notarized, so macOS may require Control-clicking the app and choosing **Open** on first launch.
 
 Prerequisites: macOS on Apple Silicon, Python 3.11+, Node.js, FFmpeg, FFprobe, `uv`, and the Tauri development prerequisites.
 
