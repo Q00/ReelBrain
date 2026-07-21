@@ -169,4 +169,4 @@ Do not include private footage, transcripts, provider credentials, generated `.e
 
 ReelBrain is **source-available** under the [Sustainable Use License](LICENSE). Individuals may use, modify, and self-host ReelBrain for personal, educational, research, and internal business purposes, subject to the exact `LICENSE` terms.
 
-Offering ReelBrain as a competing paid hosted service, reselling it, or commercially providing it to third parties is outside the permitted uses and requires a separate commercial license from `[COMMERCIAL_LICENSE_CONTACT]`. The `LICENSE` file is authoritative if this summary and the license differ.
+Offering ReelBrain as a competing paid hosted service, reselling it, or commercially providing it to third parties is outside the permitted uses and requires a separate commercial license from [jqyu.lee@gmail.com](mailto:jqyu.lee@gmail.com). The `LICENSE` file is authoritative if this summary and the license differ.
